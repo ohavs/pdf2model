@@ -225,12 +225,113 @@ async function renderPage(n){
   $('#pgLabel').textContent=n+' / '+S.numPages;
   $('#prevPg').disabled=n<=1; $('#nextPg').disabled=n>=S.numPages;
   fit(); draw();
+  /* read the page's own linework in the background — the sheet is already up */
+  clearVectors(); vecState();
+  const token=VEC.token, page=S.page;
+  readVectors(page,vp,token).then(()=>{ if(token===VEC.token){ vecState(); draw(); } });
 }
 $('#prevPg').onclick=()=>{ if(S.pageNum>1){renderPage(S.pageNum-1);touch();} };
 $('#nextPg').onclick=()=>{ if(S.pageNum<S.numPages){renderPage(S.pageNum+1);touch();} };
 
 $('#pname').oninput=e=>{ S.name=e.target.value||'Untitled plan'; touch(); };
 $('#pname').onkeydown=e=>{ if(e.key==='Enter') e.target.blur(); };
+
+/* ══ vector geometry ════════════════════════════════════════════════
+   A drawing that still carries real paths already knows where its own corners
+   are. We read them out of the operator list and offer them to the snap, so a
+   traced corner lands on the architect's line instead of on a pixel the user
+   aimed at. Nothing here draws a wall or decides what anything means — it only
+   surfaces points the drawing already contains, and Shift ignores them. */
+const VEC={pts:null,grid:null,cell:8,token:0,announced:false};
+const VEC_MAX=90000;
+
+const matMul=(a,b)=>[
+  a[0]*b[0]+a[2]*b[1], a[1]*b[0]+a[3]*b[1],
+  a[0]*b[2]+a[2]*b[3], a[1]*b[2]+a[3]*b[3],
+  a[0]*b[4]+a[2]*b[5]+a[4], a[1]*b[4]+a[3]*b[5]+a[5]];
+
+function clearVectors(){ VEC.pts=null; VEC.grid=null; VEC.token++; }
+
+async function readVectors(page,vp,token){
+  if(!window.pdfjsLib||!pdfjsLib.OPS) return;
+  let ol;
+  try{ ol=await page.getOperatorList(); }
+  catch(e){ console.warn('[vector]',e); return; }
+  if(token!==VEC.token) return;
+
+  const O=pdfjsLib.OPS, W=vp.width, H=vp.height;
+  let m=vp.transform.slice();
+  const stack=[], xs=[], ys=[];
+  const put=(x,y)=>{
+    if(xs.length>=VEC_MAX) return;
+    const px=m[0]*x+m[2]*y+m[4], py=m[1]*x+m[3]*y+m[5];
+    if(!isFinite(px)||!isFinite(py)) return;
+    if(px<-8||py<-8||px>W+8||py>H+8) return;   // off the sheet
+    xs.push(px); ys.push(py);
+  };
+
+  for(let i=0;i<ol.fnArray.length;i++){
+    const fn=ol.fnArray[i], a=ol.argsArray[i];
+    if(fn===O.save) stack.push(m.slice());
+    else if(fn===O.restore){ if(stack.length) m=stack.pop(); }
+    else if(fn===O.transform) m=matMul(m,a);
+    else if(fn===O.paintFormXObjectBegin){ stack.push(m.slice()); if(a&&a[0]) m=matMul(m,a[0]); }
+    else if(fn===O.paintFormXObjectEnd){ if(stack.length) m=stack.pop(); }
+    else if(fn===O.constructPath){
+      const ops=a[0], co=a[1];
+      let k=0, sx=0, sy=0;
+      for(let j=0;j<ops.length;j++){
+        const op=ops[j];
+        if(op===O.moveTo){ sx=co[k++]; sy=co[k++]; put(sx,sy); }
+        else if(op===O.lineTo){ put(co[k++],co[k++]); }
+        else if(op===O.curveTo){ k+=4; put(co[k++],co[k++]); }
+        else if(op===O.curveTo2||op===O.curveTo3){ k+=2; put(co[k++],co[k++]); }
+        else if(op===O.closePath){ /* back to the subpath start, already recorded */ }
+        else if(op===O.rectangle){
+          const x=co[k++], y=co[k++], w=co[k++], h=co[k++];
+          put(x,y); put(x+w,y); put(x+w,y+h); put(x,y+h);
+        }
+      }
+    }
+    if(xs.length>=VEC_MAX) break;
+  }
+  if(token!==VEC.token) return;
+
+  /* dedupe to half a source pixel, then bucket for lookup */
+  const seen=new Set(), pts=[];
+  for(let i=0;i<xs.length;i++){
+    const key=Math.round(xs[i]*2)+','+Math.round(ys[i]*2);
+    if(seen.has(key)) continue;
+    seen.add(key); pts.push(xs[i],ys[i]);
+  }
+  const grid=new Map();
+  for(let i=0;i<pts.length;i+=2){
+    const key=Math.floor(pts[i]/VEC.cell)+','+Math.floor(pts[i+1]/VEC.cell);
+    const b=grid.get(key); if(b) b.push(i); else grid.set(key,[i]);
+  }
+  VEC.pts=pts; VEC.grid=grid;
+}
+
+function vecNear(p,R){
+  if(!VEC.grid) return null;
+  const c=VEC.cell, span=Math.ceil(R/c);
+  const gx=Math.floor(p.x/c), gy=Math.floor(p.y/c);
+  let best=null, bd=R*R;
+  for(let i=-span;i<=span;i++)for(let j=-span;j<=span;j++){
+    const b=VEC.grid.get((gx+i)+','+(gy+j)); if(!b) continue;
+    for(const k of b){
+      const dx=VEC.pts[k]-p.x, dy=VEC.pts[k+1]-p.y, d=dx*dx+dy*dy;
+      if(d<bd){ bd=d; best={x:VEC.pts[k],y:VEC.pts[k+1],kind:'vector'}; }
+    }
+  }
+  return best;
+}
+
+function vecState(){
+  const el=$('#vecState'); if(!el) return;
+  const n=VEC.pts?VEC.pts.length/2:0;
+  el.textContent=n?'Corners snap to the drawing':'';
+}
 
 /* ══ view ═══════════════════════════════════════════════════════════ */
 function sizeCanvas(){
@@ -278,7 +379,7 @@ const TOOLS={select:'#tSelect',calibrate:'#tCal',wall:'#tWall',door:'#tDoor',win
 const PROMPT={
   select:'Click a wall or an opening to select it. Backspace removes it.',
   calibrate:'Click one end of a wall you know, then the other.',
-  wall:'Click each corner. Hold Shift to break the square snap. Esc ends the run.',
+  wall:'Click each corner. Hold Shift to place one freehand. Esc ends the run.',
   door:'Click a wall where the door goes.',
   window:'Click a wall where the window goes.'
 };
@@ -344,7 +445,11 @@ function snapPoint(p,anchor){
   const R=13/S.view.z;
   let best=null,bd=R;
   for(const n of S.nodes){ const d=dist(n,p); if(d<bd){bd=d;best={x:n.x,y:n.y,id:n.id,kind:'node'};} }
-  if(best) return best;
+  if(best) return best;                                  // the user's own corners win
+  if(!keys.shift){
+    const v=vecNear(p,11/S.view.z);                      // then the drawing's own
+    if(v) return v;
+  }
   if(anchor&&!keys.shift){
     const dx=p.x-anchor.x, dy=p.y-anchor.y, L=Math.hypot(dx,dy);
     if(L>1){
@@ -639,6 +744,11 @@ function drawSnap(){
   const p=toScreen(S.snap);
   ctx.save(); ctx.strokeStyle='#E8B923';
   if(S.snap.kind==='node'){ ctx.lineWidth=2; ctx.strokeRect(p.x-5,p.y-5,10,10); }
+  else if(S.snap.kind==='vector'){
+    ctx.lineWidth=1.8; ctx.beginPath();
+    ctx.moveTo(p.x,p.y-6);ctx.lineTo(p.x+6,p.y);ctx.lineTo(p.x,p.y+6);ctx.lineTo(p.x-6,p.y);
+    ctx.closePath(); ctx.stroke();
+  }
   else if(S.snap.kind==='ortho'){
     ctx.lineWidth=1.4; ctx.beginPath();
     ctx.moveTo(p.x-7,p.y);ctx.lineTo(p.x+7,p.y);ctx.moveTo(p.x,p.y-7);ctx.lineTo(p.x,p.y+7); ctx.stroke();

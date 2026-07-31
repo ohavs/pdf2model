@@ -143,6 +143,7 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 
 #status{display:flex;align-items:center;gap:14px;padding:0 12px;background:var(--ink);color:#C9C3B7;font-size:11.5px}
 #status .live{color:var(--rule);font-family:"Archivo Narrow";font-variant-numeric:tabular-nums;font-size:12px}
+#status .muted{color:#9E9789;white-space:nowrap}
 
 .pop{position:absolute;z-index:40;background:var(--board);border:1px solid var(--line);border-radius:var(--r);
   box-shadow:0 8px 26px rgba(0,0,0,.22);padding:12px;display:none}
@@ -336,7 +337,8 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
     <span id="msg">Open a PDF to begin.</span>
     <span class="spacer"></span>
     <span id="liveDim" class="live"></span>
-    <span id="tally" style="color:#8E887B"></span>
+    <span id="vecState" class="muted"></span>
+    <span id="tally" class="muted"></span>
   </footer>
 </div>
 

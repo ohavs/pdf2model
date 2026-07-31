@@ -102,6 +102,10 @@ outline at 1px offset, on canvas handles as well as buttons.
 - **The model is framed, not guessed.** On the first raise the camera fits the eight corners of
   the plan's bounding box at the opening orbit angles, against the pane's own aspect. The stage is
   a tall narrow column, so it is the horizontal half-angle that sets the distance.
+- **Three snap marks, one language.** A square on one of the user's own corners, a **diamond on a
+  corner belonging to the drawing itself**, a cross on the 45° lock. All in `--rule`, because all
+  three are the live measurement. Shift suppresses everything the software inferred and leaves the
+  square, which is the only mark the user made.
 - **Eye level stands, it does not orbit.** The camera is placed inside the largest room the user
   closed, set back a third of that room's longer axis and pointed down it, on a 70° interior lens.
   Orbit keeps the 48° lens. Orbiting a target two metres ahead only ever framed the wall behind it.
@@ -121,7 +125,9 @@ the flow. Errors name the problem and the recovery — "That line is too short t
 Draw a longer one." Never an apology, never a vague failure.
 
 Numbers are metric and never invented: a dimension appears only after the user has calibrated,
-and the scale chip stays yellow and reads "not set" until then.
+and the scale chip stays yellow and reads "not set" until then. The status bar says "Corners snap
+to the drawing" only on a page that really has vector paths, and says nothing at all on a scan —
+the interface never claims an accuracy it does not have.
 
 ## Known gaps
 

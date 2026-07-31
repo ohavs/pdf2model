@@ -19,16 +19,20 @@
   --r:3px; --t-fast:120ms cubic-bezier(.2,.7,.3,1); --t:190ms cubic-bezier(.2,.7,.3,1);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+/* .btn, .pager and .scale-chip set a display, which outranks the UA [hidden] rule.
+   Without this, controls that have not earned their place are visible. */
+[hidden]{display:none !important}
 html,body{height:100%}
 body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;line-height:1.45;
   color:var(--ink);background:var(--board-2);overflow:hidden;-webkit-font-smoothing:antialiased}
 .num{font-family:"Archivo Narrow",Archivo,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:.01em}
 .spacer{flex:1}
 
-#app{display:grid;grid-template-rows:44px 1fr 26px;height:100%}
+/* minmax(0,1fr) so a wide topbar cannot set a min-content floor on the whole app */
+#app{display:grid;grid-template-rows:44px 1fr 26px;grid-template-columns:minmax(0,1fr);height:100%}
 
 /* topbar */
-#top{display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--board-2);border-bottom:1px solid var(--line)}
+#top{display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--board-2);border-bottom:1px solid var(--line);min-width:0;overflow:hidden}
 .brand{display:flex;align-items:center;gap:7px;font-weight:700;letter-spacing:-.01em;flex-shrink:0}
 .scale-chip{display:flex;align-items:center;gap:8px;height:26px;padding:0 9px;background:var(--ink);color:var(--board);border-radius:var(--r);flex-shrink:0}
 .scale-chip.unset{background:var(--rule);color:var(--ink)}
@@ -38,7 +42,7 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   height:26px;padding:0 7px;border-radius:var(--r);width:170px;transition:border-color var(--t-fast),background var(--t-fast)}
 #pname:hover{border-color:var(--line);background:var(--board)}
 #pname:focus{border-color:var(--ink);background:var(--sheet);outline:none}
-#saveState{font-size:11.5px;color:var(--ink-3);min-width:86px;white-space:nowrap}
+#saveState{font-size:11.5px;color:var(--ink-2);min-width:86px;white-space:nowrap}
 #saveState.busy{color:var(--ink-2)}
 #saveState.ok{color:var(--ok)}
 #saveState.warn{color:var(--blade)}
@@ -55,9 +59,9 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 .btn.sq{width:26px;padding:0;justify-content:center}
 :focus-visible{outline:2px solid var(--ink);outline-offset:1px}
 
-#body{display:grid;grid-template-columns:1fr 380px 46px;min-height:0}
-#body.wide3d{grid-template-columns:1fr 62% 46px}
-#body.no3d{grid-template-columns:1fr 0px 46px}
+#body{display:grid;grid-template-columns:minmax(0,1fr) 380px 46px;min-height:0}
+#body.wide3d{grid-template-columns:minmax(0,1fr) 62% 46px}
+#body.no3d{grid-template-columns:minmax(0,1fr) 0px 46px}
 
 /* plan */
 #plan{position:relative;background:var(--mat);overflow:hidden;min-width:0}
@@ -78,14 +82,14 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 #drop ol{list-style:none;margin:0 0 22px;border-top:1px solid var(--line-soft)}
 #drop li{display:grid;grid-template-columns:20px 1fr;gap:9px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px;color:var(--ink-2)}
 #drop li b{color:var(--ink);font-weight:600}
-#drop li .n{font-family:"Archivo Narrow";font-size:11px;color:var(--ink-3);padding-top:1px}
-.hint{font-size:11.5px;color:var(--ink-3);margin-top:12px}
+#drop li .n{font-family:"Archivo Narrow";font-size:11px;color:var(--ink-2);padding-top:1px}
+.hint{font-size:11.5px;color:var(--ink-2);margin-top:12px}
 #recent{margin-top:20px;padding-top:16px;border-top:1px solid var(--line-soft)}
-#recent h4{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:8px}
+#recent h4{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);font-weight:600;margin-bottom:8px}
 .rec{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 7px;border:0;background:transparent;
   font:inherit;font-size:12.5px;color:var(--ink);text-align:left;cursor:pointer;border-radius:var(--r)}
 .rec:hover{background:#F2EFE9}
-.rec .when{font-family:"Archivo Narrow";font-size:11px;color:var(--ink-3);flex-shrink:0}
+.rec .when{font-family:"Archivo Narrow";font-size:11px;color:var(--ink-2);flex-shrink:0}
 
 #lenPop{position:absolute;z-index:20;display:none;background:var(--ink);color:var(--board);border-radius:var(--r);
   padding:8px 9px;box-shadow:0 6px 20px rgba(0,0,0,.35)}
@@ -103,10 +107,15 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 #zoom .btn{background:rgba(232,228,220,.94)}
 
 /* stage */
-#stage{position:relative;background:#CFCABF;min-width:0;border-left:1px solid var(--line)}
+/* overflow:hidden — when #body.no3d collapses this column to 0 the stage bar would
+   otherwise paint on top of the instrument rail and steal its clicks. */
+#stage{position:relative;background:#CFCABF;min-width:0;overflow:hidden;border-left:1px solid var(--line)}
 #stage canvas{display:block;width:100%;height:100%}
-#stageEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#7E7869;text-align:center;padding:20px}
-#stageEmpty svg{opacity:.5}
+/* museum board behind the empty state so the text clears AA; the mat tone
+   underneath is matched to scene.background and only shows once a model exists */
+#stageEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  background:var(--board);color:var(--ink-2);text-align:center;padding:20px}
+#stageEmpty svg{opacity:.5;color:var(--ink-3)}
 #stageEmpty p{font-size:12px;max-width:24ch}
 #stageBar{position:absolute;left:0;right:0;top:0;height:32px;display:flex;align-items:center;gap:4px;padding:0 8px;
   background:linear-gradient(rgba(207,202,191,.96),rgba(207,202,191,0));z-index:3}
@@ -138,12 +147,14 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 .pop{position:absolute;z-index:40;background:var(--board);border:1px solid var(--line);border-radius:var(--r);
   box-shadow:0 8px 26px rgba(0,0,0,.22);padding:12px;display:none}
 .pop.on{display:block}
-.pop h3{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:9px}
-#opt{right:52px;width:206px}
+.pop h3{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);font-weight:600;margin-bottom:9px}
+#opt{right:52px;width:214px}
 #opt .f{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
 #opt .f:last-child{margin-bottom:0}
 #opt label{font-size:12px;color:var(--ink-2)}
-#opt input[type=number]{width:64px;height:24px;border:1px solid var(--line);border-radius:var(--r);background:var(--sheet);padding:0 6px;
+#opt .val{display:flex;align-items:baseline;gap:4px;flex-shrink:0}
+#opt .val .u{font-family:"Archivo Narrow";font-size:11px;color:var(--ink-2)}
+#opt input[type=number]{width:60px;height:24px;border:1px solid var(--line);border-radius:var(--r);background:var(--sheet);padding:0 6px;
   font:inherit;font-size:12px;font-family:"Archivo Narrow";font-variant-numeric:tabular-nums;color:var(--ink)}
 #opt input:focus{outline:2px solid var(--ink)}
 #exp{right:52px;width:200px}
@@ -151,18 +162,26 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   font:inherit;font-size:12.5px;color:var(--ink);cursor:pointer;border-radius:var(--r);text-align:left}
 #exp button:hover:not(:disabled){background:#F2EFE9}
 #exp button:disabled{opacity:.4;cursor:not-allowed}
-#exp button small{font-family:"Archivo Narrow";font-size:11px;color:var(--ink-3)}
+#exp button small{font-family:"Archivo Narrow";font-size:11px;color:var(--ink-2)}
 
 #toast{position:fixed;left:50%;bottom:44px;transform:translateX(-50%) translateY(8px);z-index:70;background:var(--ink);color:var(--board);
   padding:8px 13px;border-radius:var(--r);font-size:12.5px;opacity:0;pointer-events:none;transition:opacity var(--t),transform var(--t);
   box-shadow:0 6px 22px rgba(0,0,0,.3);max-width:min(440px,86vw)}
 #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
 
+/* Below 820px the model pane is removed rather than stacked: tracing needs a pointer
+   and a large canvas. The instruments that only act on the model go with it, and the
+   topbar is allowed to shrink so the rail is never pushed off-screen. */
 @media (max-width:820px){
-  #body,#body.wide3d,#body.no3d{grid-template-columns:1fr 46px}
+  #body,#body.wide3d,#body.no3d{grid-template-columns:minmax(0,1fr) 46px}
   #stage{display:none}
-  #pname{width:110px}
-  #saveState{display:none}
+  #top{gap:8px;padding:0 8px}
+  #pname{width:auto;flex:1 1 70px;min-width:0}
+  .brand-name{display:none}
+  #saveState,#newBtn{display:none}
+  #tRaise,#tExp,#railSep{display:none}
+  #scaleChip{min-width:0}
+  #scaleChip .lbl{display:none}
 }
 @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms !important}}
 </style>
@@ -189,7 +208,7 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
       <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
         <path d="M1.5 12.5V5L7.5 1.5L13.5 5v7.5"/><path d="M1.5 12.5h12"/><path d="M5.5 12.5V8h4v4.5"/>
       </svg>
-      pdf2model
+      <span class="brand-name">pdf2model</span>
     </span>
     <input id="pname" value="Untitled plan" aria-label="Project name" spellcheck="false" hidden>
     <span id="saveState" hidden></span>
@@ -277,7 +296,7 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 14V2h7v12"/><path d="M1.5 14h13"/><circle cx="8.3" cy="8.2" r=".7" fill="currentColor" stroke="none"/></svg></button>
       <button class="tool" id="tWin" data-tip="Window" data-kb="N" aria-pressed="false" disabled>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2.5" y="3.5" width="11" height="9"/><path d="M8 3.5v9M2.5 8h11"/></svg></button>
-      <div class="rail-sep"></div>
+      <div class="rail-sep" id="railSep"></div>
       <button class="tool" id="tRaise" data-tip="Raise the walls" data-kb="R" disabled>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.5v7"/><path d="M5 4.5L8 1.5l3 3"/><path d="M2 11.5l6 3 6-3"/></svg></button>
       <button class="tool" id="tOpt" data-tip="Dimensions" data-kb="," disabled>
@@ -292,11 +311,16 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 
       <div id="opt" class="pop">
         <h3>Dimensions</h3>
-        <div class="f"><label for="oWall">Wall thickness</label><input type="number" id="oWall" value="0.20" step="0.01" min="0.05" max="1"></div>
-        <div class="f"><label for="oCeil">Ceiling height</label><input type="number" id="oCeil" value="2.70" step="0.05" min="1.8" max="6"></div>
-        <div class="f"><label for="oDoor">Door width</label><input type="number" id="oDoor" value="0.90" step="0.05" min="0.5" max="3"></div>
-        <div class="f"><label for="oWin">Window width</label><input type="number" id="oWin" value="1.20" step="0.05" min="0.3" max="6"></div>
-        <div class="f"><label for="oSill">Sill height</label><input type="number" id="oSill" value="0.90" step="0.05" min="0" max="2"></div>
+        <div class="f"><label for="oWall">Wall thickness</label>
+          <span class="val"><input type="number" id="oWall" value="0.20" step="0.01" min="0.05" max="1"><span class="u">m</span></span></div>
+        <div class="f"><label for="oCeil">Ceiling height</label>
+          <span class="val"><input type="number" id="oCeil" value="2.70" step="0.05" min="1.8" max="6"><span class="u">m</span></span></div>
+        <div class="f"><label for="oDoor">Door width</label>
+          <span class="val"><input type="number" id="oDoor" value="0.90" step="0.05" min="0.5" max="3"><span class="u">m</span></span></div>
+        <div class="f"><label for="oWin">Window width</label>
+          <span class="val"><input type="number" id="oWin" value="1.20" step="0.05" min="0.3" max="6"><span class="u">m</span></span></div>
+        <div class="f"><label for="oSill">Sill height</label>
+          <span class="val"><input type="number" id="oSill" value="0.90" step="0.05" min="0" max="2"><span class="u">m</span></span></div>
       </div>
 
       <div id="exp" class="pop">

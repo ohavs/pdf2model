@@ -284,7 +284,7 @@ const PROMPT={
 };
 function setTool(t){
   if($(TOOLS[t])?.disabled) return;
-  S.tool=t; S.chain=[]; S.cal={a:null,b:null}; S.sel=null; hideLen(); closePops();
+  S.tool=t; S.chain=[]; S.cal={a:null,b:null}; S.sel=null; hideLen(); closePops(); liveDim.textContent='';
   for(const k in TOOLS) $(TOOLS[k]).setAttribute('aria-pressed',String(k===t));
   planEl.classList.toggle('sel',t==='select');
   say(PROMPT[t]); draw();
@@ -301,6 +301,9 @@ $('#tClear').onclick=()=>{
   S.raised=false; clear3D(); refresh(); draw(); touch();
   say('Tracing cleared. The scale is kept.');
 };
+/* enabled and actually on screen — below 820px the model instruments are removed
+   with the model pane, and their shortcuts must go with them */
+function live(sel){ const el=$(sel); return !!el&&!el.disabled&&el.offsetParent!==null; }
 function closePops(){ $('#opt').classList.remove('on'); $('#exp').classList.remove('on'); }
 function togglePop(sel,btn){
   const p=$(sel), was=p.classList.contains('on');
@@ -319,8 +322,10 @@ $('#tExp').onclick=e=>togglePop('#exp',e.currentTarget);
 $('#tRaise').onclick=raise;
 
 const tip=$('#tip');
+const hideTip=()=>tip.classList.remove('on');
 document.querySelectorAll('.tool[data-tip]').forEach(b=>{
   const show=()=>{
+    if(b.disabled) return;
     const r=b.getBoundingClientRect();
     tip.innerHTML=b.dataset.tip+(b.dataset.kb?'<span class="kb">'+b.dataset.kb+'</span>':'');
     tip.classList.add('on');
@@ -328,8 +333,9 @@ document.querySelectorAll('.tool[data-tip]').forEach(b=>{
     tip.style.left=(r.left-tip.offsetWidth-7)+'px';
   };
   b.addEventListener('mouseenter',show); b.addEventListener('focus',show);
-  b.addEventListener('mouseleave',()=>tip.classList.remove('on'));
-  b.addEventListener('blur',()=>tip.classList.remove('on'));
+  b.addEventListener('mouseleave',hideTip); b.addEventListener('blur',hideTip);
+  /* a tip that outlives its click lands on top of the popover it just opened */
+  b.addEventListener('click',hideTip);
 });
 
 /* ══ snapping / hit ═════════════════════════════════════════════════ */
@@ -398,7 +404,7 @@ planEl.addEventListener('pointerdown',e=>{
       const prev=S.chain[S.chain.length-1];
       if(prev!==id) S.walls.push({a:prev,b:id,id:uid++});
       if(id===S.chain[0]&&S.chain.length>2){
-        S.rooms.push([...S.chain]); S.chain=[];
+        S.rooms.push([...S.chain]); S.chain=[]; liveDim.textContent='';
         say('Room closed. Trace another run, or raise it.');
         refresh(); draw(); touch(); return;
       }
@@ -463,9 +469,10 @@ addEventListener('keydown',e=>{
   if(k==='w') setTool('wall');
   if(k==='d') setTool('door');
   if(k==='n') setTool('window');
-  if(k==='r'&&!$('#tRaise').disabled) raise();
-  if(k==='e'&&!$('#tExp').disabled) togglePop('#exp',$('#tExp'));
-  if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};S.sel=null;hideLen();closePops();draw(); }
+  if(k==='r'&&live('#tRaise')) raise();
+  if(k==='e'&&live('#tExp')) togglePop('#exp',$('#tExp'));
+  /* a measurement with nothing anchoring it is not a measurement */
+  if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};S.sel=null;liveDim.textContent='';hideLen();closePops();draw(); }
   if(k==='backspace'||k==='delete'){
     if(!S.sel) return; e.preventDefault(); pushHistory();
     if(S.sel.t==='opening') S.openings.splice(S.sel.i,1);
@@ -532,7 +539,9 @@ function draw(){
 }
 function drawRooms(){
   if(!S.rooms.length) return;
-  ctx.save(); ctx.fillStyle='rgba(232,185,35,.13)';
+  /* graphite wash, not --rule: the yellow is reserved for the active instrument,
+     the selection, the live measurement and the unset-scale chip. */
+  ctx.save(); ctx.fillStyle='rgba(35,33,30,.07)';
   for(const r of S.rooms){
     ctx.beginPath();
     r.forEach((id,i)=>{ const n=node(id); if(!n)return; const p=toScreen(n); i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y); });
@@ -551,18 +560,9 @@ function drawWalls(){
     ctx.lineWidth=Math.max(2.5,tPx);
     ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
     ctx.restore();
-    if(S.mpp&&S.view.z>0.12){
-      const txt=fmt(dist(a,b)*S.mpp);
-      let ang=Math.atan2(B.y-A.y,B.x-A.x);
-      if(ang>Math.PI/2||ang<-Math.PI/2) ang+=Math.PI;
-      ctx.save(); ctx.translate((A.x+B.x)/2,(A.y+B.y)/2); ctx.rotate(ang);
-      ctx.font='500 11px "Archivo Narrow", sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      const tw=ctx.measureText(txt).width;
-      ctx.fillStyle=on?'#E8B923':'#FFFFFF'; ctx.fillRect(-tw/2-3,-8,tw+6,15);
-      ctx.fillStyle='#23211E'; ctx.fillText(txt,0,0);
-      ctx.restore();
-    }
   });
+  /* corner handles before the dimension strings — a corner that lands mid-span
+     was punching a hole through the number. */
   const used=new Set(); S.walls.forEach(w=>{used.add(w.a);used.add(w.b);});
   ctx.save();
   for(const n of S.nodes){
@@ -572,6 +572,21 @@ function drawWalls(){
     ctx.beginPath(); ctx.rect(p.x-2.5,p.y-2.5,5,5); ctx.fill(); ctx.stroke();
   }
   ctx.restore();
+  if(!S.mpp||S.view.z<=0.12) return;
+  S.walls.forEach((w,i)=>{
+    const a=node(w.a), b=node(w.b); if(!a||!b) return;
+    const A=toScreen(a), B=toScreen(b);
+    const on=S.sel?.t==='wall'&&S.sel.i===i;
+    const txt=fmt(dist(a,b)*S.mpp);
+    let ang=Math.atan2(B.y-A.y,B.x-A.x);
+    if(ang>Math.PI/2||ang<-Math.PI/2) ang+=Math.PI;
+    ctx.save(); ctx.translate((A.x+B.x)/2,(A.y+B.y)/2); ctx.rotate(ang);
+    ctx.font='500 11px "Archivo Narrow", sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    const tw=ctx.measureText(txt).width;
+    ctx.fillStyle=on?'#E8B923':'#FFFFFF'; ctx.fillRect(-tw/2-3,-8,tw+6,15);
+    ctx.fillStyle='#23211E'; ctx.fillText(txt,0,0);
+    ctx.restore();
+  });
 }
 function drawOpenings(){
   const tPx=S.mpp?(S.dims.wall/S.mpp)*S.view.z:6;
@@ -634,6 +649,7 @@ function drawSnap(){
 /* ══ 3d ═════════════════════════════════════════════════════════════ */
 const stage=$('#stage');
 let renderer,scene,camera,shell,envRT,sun,hemi,raiseT=0,raising=false;
+let eye=null, orbitHome=null;
 const orbit={az:-0.75,el:0.62,r:14,tx:0,ty:0,tz:0};
 
 function init3D(){
@@ -654,15 +670,24 @@ function init3D(){
   buildEnv(); bindOrbit(); resize3D();
   (function loop(){ requestAnimationFrame(loop); tick(); })();
 }
+/* Sky gradient for the image-based light. It is baked into a canvas texture on a
+   plain MeshBasicMaterial rather than drawn by a ShaderMaterial: a raw ShaderMaterial
+   run through PMREMGenerator.fromScene resolves to a black environment map, which
+   turned every surface in Render mode black. Values are linear, not sRGB — the PMREM
+   pass renders with LinearEncoding and no tone mapping. */
+function skyTexture(){
+  const c=document.createElement('canvas'); c.width=8; c.height=256;
+  const g=c.getContext('2d'), grd=g.createLinearGradient(0,0,0,256);
+  grd.addColorStop(0,'rgb(158,179,209)');    // zenith   .62 .70 .82
+  grd.addColorStop(.5,'rgb(235,230,219)');   // horizon  .92 .90 .86
+  grd.addColorStop(1,'rgb(77,71,64)');       // ground   .30 .28 .25
+  g.fillStyle=grd; g.fillRect(0,0,8,256);
+  return new THREE.CanvasTexture(c);
+}
 function buildEnv(){
   const s=new THREE.Scene();
-  s.add(new THREE.Mesh(new THREE.SphereGeometry(60,24,16),new THREE.ShaderMaterial({
-    side:THREE.BackSide,
-    vertexShader:'varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-    fragmentShader:`varying vec3 vP;void main(){float h=normalize(vP).y*.5+.5;
-      vec3 top=vec3(.62,.70,.82),hor=vec3(.92,.90,.86),bot=vec3(.30,.28,.25);
-      vec3 c=h>.5?mix(hor,top,(h-.5)*2.):mix(bot,hor,h*2.);gl_FragColor=vec4(c,1.);}`
-  })));
+  s.add(new THREE.Mesh(new THREE.SphereGeometry(60,24,16),
+    new THREE.MeshBasicMaterial({map:skyTexture(),side:THREE.BackSide})));
   const lamp=new THREE.Mesh(new THREE.PlaneGeometry(26,20),new THREE.MeshBasicMaterial({color:0xffffff}));
   lamp.position.set(-24,11,16); lamp.lookAt(0,2,0); s.add(lamp);
   const pm=new THREE.PMREMGenerator(renderer); pm.compileEquirectangularShader();
@@ -701,12 +726,21 @@ function tick(){
     applyRise(1-Math.pow(1-raiseT,3.2));
     if(raiseT>=1) raising=false;
   }
-  const cy=S.cam==='eye'?1.62:orbit.ty;
-  camera.position.set(
-    orbit.tx+Math.cos(orbit.az)*Math.cos(orbit.el)*orbit.r,
-    cy+Math.sin(orbit.el)*orbit.r,
-    orbit.tz+Math.sin(orbit.az)*Math.cos(orbit.el)*orbit.r);
-  camera.lookAt(orbit.tx,cy*.55+.9,orbit.tz);
+  if(S.cam==='eye'){
+    /* stand at the target and look out from it. Orbiting a point a couple of
+       metres ahead just filled the frame with whatever wall was behind it. */
+    camera.position.set(orbit.tx,1.62,orbit.tz);
+    camera.lookAt(
+      orbit.tx-Math.cos(orbit.az)*Math.cos(orbit.el)*4,
+      1.62-Math.sin(orbit.el)*4,
+      orbit.tz-Math.sin(orbit.az)*Math.cos(orbit.el)*4);
+  }else{
+    camera.position.set(
+      orbit.tx+Math.cos(orbit.az)*Math.cos(orbit.el)*orbit.r,
+      orbit.ty+Math.sin(orbit.el)*orbit.r,
+      orbit.tz+Math.sin(orbit.az)*Math.cos(orbit.el)*orbit.r);
+    camera.lookAt(orbit.tx,orbit.ty*.55+.9,orbit.tz);
+  }
   renderer.render(scene,camera);
 }
 function applyRise(e){
@@ -717,6 +751,7 @@ function applyRise(e){
   });
 }
 function clear3D(){
+  eye=null; orbitHome=null;
   if(shell&&scene){ scene.remove(shell); disposeTree(shell); shell=null; }
   $('#stageEmpty').style.display='';
   bodyEl.classList.add('no3d'); bodyEl.classList.remove('wide3d');
@@ -823,12 +858,70 @@ function build3D(){
     shell.add(g);
   });
 
+  /* where eye level puts you: the middle of the largest room the user closed,
+     falling back to the middle of the plan when nothing is closed yet */
+  eye=null;
+  let bestA=0;
+  for(const r of S.rooms){
+    const p=r.map(id=>node(id)).filter(Boolean).map(n=>({x:X(n),z:Z(n)}));
+    if(p.length<3) continue;
+    let A=0,sx=0,sz=0;
+    for(let i=0;i<p.length;i++){
+      const a=p[i], b=p[(i+1)%p.length], cr=a.x*b.z-b.x*a.z;
+      A+=cr; sx+=(a.x+b.x)*cr; sz+=(a.z+b.z)*cr;
+    }
+    A/=2;
+    if(Math.abs(A)<=bestA||Math.abs(A)<=0.5) continue;
+    bestA=Math.abs(A);
+    const xs=p.map(q=>q.x), zs=p.map(q=>q.z);
+    const bw=Math.max(...xs)-Math.min(...xs), bd=Math.max(...zs)-Math.min(...zs);
+    eye=spotIn(sx/(6*A),sz/(6*A),bw,bd);
+  }
+  if(!eye) eye=spotIn(0,0,(maxX-minX)*m,(maxY-minY)*m);
+
   if(!S.raised){
-    orbit.r=Math.max(4,Math.max((maxX-minX)*m,(maxY-minY)*m)*1.35);
+    frameModel((maxX-minX)*m,(maxY-minY)*m,H);
     orbit.ty=H*.55; orbit.tx=0; orbit.tz=0;
   }
   applyEnv(); applyRise(S.raised?1:0);
   $('#stageEmpty').style.display='none';
+}
+/* Stand back along the room's longer axis and look down it. Standing in the middle
+   of a room and facing an arbitrary direction just fills the frame with the nearest
+   wall — the view has to be composed down the length of the space. az is the orbit
+   azimuth; the camera looks along its negative. */
+function spotIn(cx,cz,w,d){
+  return w>=d ? {x:cx-w*.34, z:cz, az:Math.PI}
+              : {x:cx, z:cz-d*.34, az:-Math.PI/2};
+}
+
+/* Pull back far enough that the whole plan fits the pane. The stage is a tall,
+   narrow column, so the horizontal half-angle — not the camera's vertical fov —
+   is usually what decides the distance; sizing off the plan's longest side alone
+   opened every model as a close-up of one wall. Fits the eight corners of the
+   bounding box at the opening orbit angles rather than its bounding sphere, which
+   is far too loose for a shape this flat. */
+function frameModel(w,d,h){
+  const r=stage.getBoundingClientRect();
+  const aspect=(r.width>8&&r.height>8)?r.width/r.height:(camera.aspect||1);
+  const vHalf=camera.fov*Math.PI/360;
+  const hHalf=Math.atan(Math.tan(vHalf)*aspect);
+  const ty=h*.55, look={x:0,y:ty*.55+.9,z:0};
+  /* camera basis at the opening orbit angles, unit distance */
+  const f={x:Math.cos(orbit.az)*Math.cos(orbit.el),y:Math.sin(orbit.el),z:Math.sin(orbit.az)*Math.cos(orbit.el)};
+  const up={x:0,y:1,z:0};
+  const rt={x:f.z*up.y-f.y*up.z,y:f.x*up.z-f.z*up.x,z:f.y*up.x-f.x*up.y};
+  const rl=Math.hypot(rt.x,rt.y,rt.z); rt.x/=rl; rt.y/=rl; rt.z/=rl;
+  const u={x:rt.y*f.z-rt.z*f.y,y:rt.z*f.x-rt.x*f.z,z:rt.x*f.y-rt.y*f.x};
+  let need=4;
+  for(const sx of[-1,1])for(const sy of[0,1])for(const sz of[-1,1]){
+    const p={x:sx*w/2-look.x,y:sy*h-look.y,z:sz*d/2-look.z};
+    const along=-(p.x*f.x+p.y*f.y+p.z*f.z);           // depth toward the camera
+    const px=p.x*rt.x+p.y*rt.y+p.z*rt.z;
+    const py=p.x*u.x+p.y*u.y+p.z*u.z;
+    need=Math.max(need,along+Math.abs(px)/Math.tan(hHalf),along+Math.abs(py)/Math.tan(vHalf));
+  }
+  orbit.r=clamp(need*1.08,4,180);
 }
 function applyEnv(){
   const r=S.mode==='render';
@@ -838,7 +931,7 @@ function applyEnv(){
   renderer.toneMappingExposure=r?1.05:1;
 }
 function raise(){
-  if($('#tRaise').disabled) return;
+  if(!live('#tRaise')) return;
   bodyEl.classList.remove('no3d');
   build3D(); S.raised=true; raiseT=0; raising=true;
   requestAnimationFrame(resize3D); refresh();
@@ -855,11 +948,23 @@ function setMode(m){
 $('#vOrbit').onclick=()=>setCam('orbit');
 $('#vEye').onclick=()=>setCam('eye');
 function setCam(c){
+  if(S.cam===c) return;
   S.cam=c;
   $('#vOrbit').setAttribute('aria-pressed',String(c==='orbit'));
   $('#vEye').setAttribute('aria-pressed',String(c==='eye'));
-  if(c==='eye'){ orbit.r=Math.min(orbit.r,3.2); orbit.el=.02; }
-  else{ orbit.el=Math.max(orbit.el,.35); orbit.r=Math.max(orbit.r,7); }
+  if(c==='eye'){
+    /* stand in a room rather than at the model's origin, which on a plan with
+       interior walls is often inside one of them */
+    orbitHome={tx:orbit.tx,tz:orbit.tz,r:orbit.r,el:orbit.el,az:orbit.az};
+    const e=eye||{x:0,z:0,az:Math.PI};
+    orbit.tx=e.x; orbit.tz=e.z; orbit.az=e.az; orbit.el=.02;
+    orbit.r=3;   /* not a distance here, only the pan speed reference */
+    if(camera){ camera.fov=70; camera.updateProjectionMatrix(); }  /* an interior lens */
+  }else{
+    if(orbitHome){ Object.assign(orbit,orbitHome); orbitHome=null; }
+    orbit.el=Math.max(orbit.el,.35); orbit.r=Math.max(orbit.r,7);
+    if(camera){ camera.fov=48; camera.updateProjectionMatrix(); }
+  }
 }
 $('#expand').onclick=()=>{ bodyEl.classList.toggle('wide3d'); requestAnimationFrame(resize3D); };
 

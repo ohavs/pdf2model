@@ -29,18 +29,28 @@ Strategy: **Restrained.** Warm neutrals carry every surface; one accent carries 
 | `--sheet` | `#FFFFFF` | The user's PDF. Never tinted, only dimmed to 34% once tracing starts. |
 | `--ink` | `#23211E` | Graphite. All body text, wall linework, status bar ground. |
 | `--ink-2` | `#5C574E` | Secondary text, inactive icons. |
-| `--ink-3` | `#8A8478` | Tertiary — hints, timestamps, units. |
+| `--ink-3` | `#8A8478` | **Linework only, never text.** Door swing arcs, the empty-state glyph. |
 | `--line` | `#B9B2A4` | Borders. |
 | `--line-soft` | `#CFC9BC` | Interior rules inside the sheet. |
 | `--rule` | `#E8B923` | **Cutting-rule yellow.** |
 | `--blade` | `#B23A2E` | Destruction and failure only. |
 | `--ok` | `#4A7A46` | Save confirmation only. |
 
-**The yellow rule.** `--rule` is a fill, never a text color, because yellow text on light board
-fails contrast. Text on yellow is always `--ink` — 9.2:1, the same relationship as black markings
-on a real steel rule. It appears in exactly four places: the active instrument, the current
-selection, the live measurement being drawn, and the scale chip while scale is still unset.
-Nothing decorative is yellow. If a fifth use appears, one of them is wrong.
+**The yellow rule.** `--rule` is a fill on board, never a text color there, because yellow text on
+light board fails contrast. Text on yellow is always `--ink` — **8.71:1 measured on the render**,
+the same relationship as black markings on a real steel rule. The one place it is a text color is
+the live measurement in the `--ink` status bar, which measures the same 8.71:1 the other way round.
+
+It appears in exactly four places: the active instrument, the current selection, the live
+measurement being drawn or read out, and the scale chip while scale is still unset. Nothing
+decorative is yellow. If a fifth use appears, one of them is wrong — a closed room used to be
+washed in it and is now washed in graphite at 7%, which is what it always meant.
+
+**Tertiary text does not exist.** `--ink-3` measures 2.56:1 on `--board-2` and 3.72:1 on `--sheet`;
+there is no third text tint below `--ink-2` that clears AA on grounds this light. Everything that
+used to be tertiary text — the save state, the popover headings, the export formats, the step
+numbers, the timestamps — is `--ink-2`. Hierarchy below that comes from size, caps and tracking,
+not from a lighter grey.
 
 ## Type
 
@@ -68,8 +78,14 @@ Instruments live in a 46px right rail, ordered by the actual sequence of work �
 wall, door, window, then raise, dimensions, export, then undo and clear pinned to the bottom.
 Disabled until their precondition is met, which is how the interface teaches the order.
 
+Every column is `minmax(0, 1fr)`, not `1fr`. A plain `1fr` lets the topbar's non-shrinking chips
+set a min-content floor on the whole app, which at 390px pushed the instrument rail off a screen
+that cannot scroll.
+
 Below 820px the model pane is removed rather than stacked. Tracing needs a pointer and a large
-canvas; a phone gets the sheet and nothing else.
+canvas; a phone gets the sheet and nothing else. The instruments that only act on the model —
+raise and export — are removed with it, along with their shortcuts; the wordmark drops to its
+glyph and the scale chip drops its label so the rail always fits.
 
 ## Components
 
@@ -82,7 +98,13 @@ outline at 1px offset, on canvas handles as well as buttons.
 - **Empty states teach.** The plan pane opens with the four-step sequence and a real button. The
   model pane says what is missing and how many walls it needs.
 - **Toast** for outcomes that leave the screen (a file saved). The status bar carries everything
-  continuous.
+  continuous, and clears the live measurement the moment nothing anchors it.
+- **The model is framed, not guessed.** On the first raise the camera fits the eight corners of
+  the plan's bounding box at the opening orbit angles, against the pane's own aspect. The stage is
+  a tall narrow column, so it is the horizontal half-angle that sets the distance.
+- **Eye level stands, it does not orbit.** The camera is placed inside the largest room the user
+  closed, set back a third of that room's longer axis and pointed down it, on a 70° interior lens.
+  Orbit keeps the 48° lens. Orbiting a target two metres ahead only ever framed the wall behind it.
 
 ## Motion
 
@@ -105,8 +127,11 @@ and the scale chip stays yellow and reads "not set" until then.
 
 Recorded honestly so the next pass starts from truth.
 
-- **No finish review.** This build has not been inspected in a browser at desktop and mobile
-  widths. Contrast ratios are calculated, not measured on the render.
+**Finish review discharged.** Captured at 1440 and 390 against a real 1:50 vector plan, traced
+end to end. 54 text elements measured on the render: 0 below AA, lowest 4.56:1. Open items below.
+
+- **Eye level has no walk.** You can look around and pan, but not step through a doorway. The
+  model has no ceiling either, so the sky is overhead from inside.
 - Floors are correct only for closed traced loops; an open trace falls back to a bounding slab.
 - Materials are procedural canvas textures, not a scanned PBR library.
 - Single storey. No furniture. No AI rendering path yet.

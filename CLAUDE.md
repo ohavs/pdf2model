@@ -80,17 +80,35 @@ placeholder config anyway.
    `impeccable.style`, which this environment's egress policy returns 403 for. The review was
    conducted by hand against the direction contract in `index.html` and `DESIGN.md`. Re-run it
    with the real reviewer when the host is reachable.
-2. **Deploy and confirm — BLOCKED, needs you.** Two things only the account owner can supply:
-   - the real web config in `public/firebase-config.js` (`apiKey`, `messagingSenderId`, `appId`
-     are still `PASTE_…`); Firebase console → Project settings → Your apps → Web app → Config.
-   - deploy credentials: `FIREBASE_TOKEN`, or a service-account JSON at
-     `GOOGLE_APPLICATION_CREDENTIALS`. `firebase login` cannot run here — no browser.
+2. **Deploy and confirm — BLOCKED, needs you.** The real web config is now in
+   `public/firebase-config.js` and the key is valid. **The project's backend services have
+   never been provisioned.** Probed directly against the Google APIs:
+   - Auth → `CONFIGURATION_NOT_FOUND`. Console → Authentication → Get started → enable the
+     **Anonymous** provider.
+   - Firestore → `PERMISSION_DENIED: Cloud Firestore API has not been used in project pdf2model
+     before or it is disabled`. Console → Firestore Database → Create database.
+   - Storage → bucket 404 under both `pdf2model.firebasestorage.app` and `pdf2model.appspot.com`.
+     Console → Storage → Get started. (The console prints a `storageBucket` string before the
+     bucket exists, so the config value is not evidence that it does.)
 
-   `firebase-tools` installs fine and the rules and indexes read correctly. Once those two are
-   in place: `firebase deploy`, then load `https://pdf2model.web.app` and check anonymous auth,
-   save, reload, and reopening from the recent list. One thing to tighten while you are there:
-   `firestore.rules` checks `resource.data.uid` on update but not `request.resource.data.uid`,
-   so an owner can rewrite the `uid` field on their own doc. Untested here, so left alone.
+   Then deploy credentials, which only the owner can mint: `FIREBASE_TOKEN`, or a service-account
+   JSON at `GOOGLE_APPLICATION_CREDENTIALS`. `firebase login` cannot run here — no browser.
+   `firebase-tools` installs fine and the rules and indexes read correctly.
+
+   Note that most of the *verification* does not need a deploy: serve `public/` on localhost and
+   the SDK talks to the real project. `identitytoolkit`, `firestore` and `firebasestorage`
+   googleapis hosts are reachable from this sandbox; `www.gstatic.com` and
+   `pdf2model.firebaseapp.com` are not, so vendor the `firebase-*-compat.js` bundles from npm.
+   `cloudtest.js` in the session scratchpad does auth → save → reload → recent list → reopen →
+   cleanup and is worth rebuilding.
+
+   Verified meanwhile: with a real config whose backend is dead, the app degrades honestly —
+   "Offline", a toast saying nothing will be saved, and the empty state switched to "Nothing
+   leaves your browser."
+
+   One thing to tighten while you are in there: `firestore.rules` checks `resource.data.uid` on
+   update but not `request.resource.data.uid`, so an owner can rewrite the `uid` field on their
+   own doc. Untested here, so left alone.
 3. ~~**Read vector PDFs properly.**~~ Done. `readVectors()` in `app.js` walks
    `getOperatorList`, carries the CTM through save/restore/transform and form XObjects, and
    feeds the endpoints to `snapPoint`. Verified: clicks 100 mm off every corner of an 11×8 m

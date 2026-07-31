@@ -7,10 +7,10 @@
 
    Leave this file as-is and the app still works — it just will not save anything. */
 window.FIREBASE_CONFIG = {
-  apiKey:            "PASTE_API_KEY",
+  apiKey:            "AIzaSyAxaO2VA-wWtjeF-xRF1JPSz2nZb8EI7rw",
   authDomain:        "pdf2model.firebaseapp.com",
   projectId:         "pdf2model",
   storageBucket:     "pdf2model.firebasestorage.app",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId:             "PASTE_APP_ID"
+  messagingSenderId: "200516184105",
+  appId:             "1:200516184105:web:b6e433ea0cc16e66dc5438"
 };

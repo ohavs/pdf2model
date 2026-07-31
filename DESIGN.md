@@ -33,8 +33,8 @@ Strategy: **Restrained.** Warm neutrals carry every surface; one accent carries 
 | `--line` | `#B9B2A4` | Borders. |
 | `--line-soft` | `#CFC9BC` | Interior rules inside the sheet. |
 | `--rule` | `#E8B923` | **Cutting-rule yellow.** |
-| `--blade` | `#B23A2E` | Destruction and failure only. |
-| `--ok` | `#4A7A46` | Save confirmation only. |
+| `--blade` | `#A5352A` | Destruction and failure only. 4.61:1 as the failed-save text. |
+| `--ok` | `#3D6639` | Save confirmation only. 4.59:1 as the saved text. |
 
 **The yellow rule.** `--rule` is a fill on board, never a text color there, because yellow text on
 light board fails contrast. Text on yellow is always `--ink` — **8.71:1 measured on the render**,
@@ -134,7 +134,8 @@ the interface never claims an accuracy it does not have.
 Recorded honestly so the next pass starts from truth.
 
 **Finish review discharged.** Captured at 1440 and 390 against a real 1:50 vector plan, traced
-end to end. 54 text elements measured on the render: 0 below AA, lowest 4.56:1. Open items below.
+end to end. 57 text elements measured on the render, including the save states a placeholder
+config never reaches: 0 below AA, lowest 4.59:1. Open items below.
 
 - **Eye level has no walk.** You can look around and pan, but not step through a doorway. The
   model has no ceiling either, so the sky is overhead from inside.

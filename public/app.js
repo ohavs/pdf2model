@@ -60,6 +60,9 @@ const Cloud = {
     }catch(e){
       console.error('[cloud]',e);
       setSave('Offline','warn');
+      /* sign-in failed, so nothing is going anywhere — say so rather than leaving
+         the line that implies the plan is being stored */
+      $('#privacyLine').textContent='Or drop the file anywhere here. Nothing leaves your browser.';
       toast('Cloud sign-in failed. You can keep working — nothing will be saved.');
     }
   },

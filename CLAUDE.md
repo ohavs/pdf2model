@@ -55,23 +55,49 @@ Built and working: PDF load with multi-page, pan and zoom, calibration, wall tra
 endpoint and 45° snapping, live dimension strings, doors and windows cut as real geometry,
 closed loops becoming floors, the rise animation, Model and Render material modes, orbit and
 eye-level cameras, undo, autosave to Firestore, PDF to Storage, recent-plans list, and PNG,
-OBJ and JSON export.
+OBJ and JSON export. On a vector page, tracing snaps to the drawing's own corners.
 
-**Not verified:** this build has never been opened in a browser. Nothing has been screenshotted,
-no contrast measured on a render, no responsive behaviour confirmed. Treat every visual claim in
-`DESIGN.md` as intention until you have checked it.
+**Verified in a browser.** Driven end to end at 1440 and 390 against a real 1:50 vector plan:
+load, calibrate, trace, cut openings, raise, Model and Render, orbit and eye level, expand,
+both popovers, export menu. 54 text elements measured on the render, none below AA, lowest
+4.56:1. `DESIGN.md` now records what the code does, not what was intended.
+
+**Still unverified:** anything that needs the live Firebase project — anonymous auth, save,
+reload, and the recent-plans list have never run against a real backend, because
+`public/firebase-config.js` still holds `PASTE_…` placeholders and there are no deploy
+credentials in this environment. The app is designed to run without it and reports "Local only".
+
+The finish-review harness is not in the repo; it lives in the session scratchpad. To rebuild it:
+serve `public/`, drive it with Playwright, and substitute the CDN scripts with local copies if
+your network blocks cdnjs. Firebase's own CDN can be stubbed — `Cloud.init` bails on a
+placeholder config anyway.
 
 ## Task queue, in order
 
-1. **Discharge the finish review.** This is an outstanding contract item, not optional. Serve
-   the site, load a real PDF, capture desktop (1440) and mobile (390) in one batched round, run
-   the Impeccable finish reviewer against the direction contract, fix findings in one batch,
-   recapture, get a verdict. Report the verdict table as written, open items included.
-2. **Deploy and confirm.** `firebase deploy`, then load `https://pdf2model.web.app` and verify
-   anonymous auth, save, reload, and reopen from the recent list actually work end to end.
-3. **Read vector PDFs properly.** Right now every PDF is rasterised. When the page has real
-   vector paths, extract them with pdf.js `getOperatorList` and snap tracing to actual line
-   endpoints instead of guessed pixels. Highest-value accuracy work available.
+1. ~~**Discharge the finish review.**~~ Done. Captured at 1440 and 390 against a real vector
+   plan, findings fixed in one batch, recaptured, `DESIGN.md` rewritten from the render. The
+   Impeccable finish reviewer could **not** be run: `npx impeccable install` reaches
+   `impeccable.style`, which this environment's egress policy returns 403 for. The review was
+   conducted by hand against the direction contract in `index.html` and `DESIGN.md`. Re-run it
+   with the real reviewer when the host is reachable.
+2. **Deploy and confirm — BLOCKED, needs you.** Two things only the account owner can supply:
+   - the real web config in `public/firebase-config.js` (`apiKey`, `messagingSenderId`, `appId`
+     are still `PASTE_…`); Firebase console → Project settings → Your apps → Web app → Config.
+   - deploy credentials: `FIREBASE_TOKEN`, or a service-account JSON at
+     `GOOGLE_APPLICATION_CREDENTIALS`. `firebase login` cannot run here — no browser.
+
+   `firebase-tools` installs fine and the rules and indexes read correctly. Once those two are
+   in place: `firebase deploy`, then load `https://pdf2model.web.app` and check anonymous auth,
+   save, reload, and reopening from the recent list. One thing to tighten while you are there:
+   `firestore.rules` checks `resource.data.uid` on update but not `request.resource.data.uid`,
+   so an owner can rewrite the `uid` field on their own doc. Untested here, so left alone.
+3. ~~**Read vector PDFs properly.**~~ Done. `readVectors()` in `app.js` walks
+   `getOperatorList`, carries the CTM through save/restore/transform and form XObjects, and
+   feeds the endpoints to `snapPoint`. Verified: clicks 100 mm off every corner of an 11×8 m
+   envelope trace 11, 8, 11, 8 exactly; Shift suppresses it; a scanned page extracts nothing
+   and behaves as before. **Endpoints only** — segments are discarded after their endpoints are
+   taken, so there is no snap to a point *along* a wall, and no perpendicular or midpoint snap.
+   That is the obvious next increment.
 4. **Photoreal render path.** A Cloud Function that takes the depth and normal buffers from the
    existing three.js camera plus a style prompt and returns an image. The geometry is already
    exact, which is the whole advantage — the model only paints it. Key stays server-side.

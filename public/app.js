@@ -15,7 +15,7 @@ const S = {
   chain:[], cursor:null, snap:null, hoverWall:-1, sel:null,
   dims:{wall:.20, ceil:2.70, door:.90, win:1.20, sill:.90},
   history:[],
-  raised:false, mode:'model', cam:'orbit', shotBuffers:null,
+  raised:false, mode:'model', cam:'orbit',
   proposal:null,
   scaleSrc:null,
   projectId:null, name:'תוכנית ללא שם', pdfBytes:null, pdfName:'', dirty:false
@@ -43,7 +43,7 @@ function toast(t){
 
 /* ══ cloud ══════════════════════════════════════════════════════════ */
 const Cloud = {
-  on:false, uid:null, db:null, st:null, fn:null,
+  on:false, uid:null, db:null, st:null,
   async init(){
     const cfg=window.FIREBASE_CONFIG;
     if(!cfg||!cfg.apiKey||cfg.apiKey.startsWith('PASTE')){
@@ -54,7 +54,6 @@ const Cloud = {
     try{
       firebase.initializeApp(cfg);
       this.db=firebase.firestore(); this.st=firebase.storage();
-      if(firebase.functions) this.fn=firebase.functions();
       const cred=await firebase.auth().signInAnonymously();
       this.uid=cred.user.uid; this.on=true;
       $('#privacyLine').textContent='או גררו את הקובץ לכאן. התוכניות שלכם פרטיות לדפדפן הזה.';
@@ -85,17 +84,39 @@ function setSave(t,cls){
   const el=$('#saveState'); el.hidden=false; el.textContent=t;
   el.className=cls||'';
 }
+/* Firestore rejects two things this model produces naturally, and both were
+   silently killing every save — which is why nothing could be reopened: the
+   list was empty because nothing had ever been written.
+
+   1. undefined. Detection builds walls with a measured thickness, but a wall
+      that came from the manual tool has none, so `t` arrived as undefined.
+   2. an array directly inside an array. Rooms are polygons — arrays of points
+      inside an array of rooms — which Firestore will not store at all.
+
+   Rooms are derived from the walls anyway, so they are recomputed on load
+   rather than persisted, and everything else is stripped of undefined. */
+const noUndef = v => {
+  if (Array.isArray(v)) return v.map(noUndef);
+  if (v && typeof v === 'object') {
+    const o = {};
+    for (const k in v) if (v[k] !== undefined) o[k] = noUndef(v[k]);
+    return o;
+  }
+  return v === undefined ? null : v;
+};
 function serialize(){
-  return {
+  return noUndef({
     uid:Cloud.uid, name:S.name, pdfName:S.pdfName, pageNum:S.pageNum, mpp:S.mpp,
-    dims:S.dims, nodes:S.nodes, walls:S.walls, rooms:S.rooms, openings:S.openings,
+    dims:S.dims, nodes:S.nodes, walls:S.walls, openings:S.openings,
     uidSeq:uid, updatedAt:Date.now()
-  };
+  });
 }
 function hydrate(d){
   S.name=d.name||'תוכנית ללא שם'; S.pdfName=d.pdfName||''; S.mpp=d.mpp??null;
   S.dims=Object.assign(S.dims,d.dims||{});
-  S.nodes=d.nodes||[]; S.walls=d.walls||[]; S.rooms=d.rooms||[]; S.openings=d.openings||[];
+  S.nodes=d.nodes||[]; S.walls=d.walls||[]; S.openings=d.openings||[];
+  /* rooms are derived, never stored — recompute them from the walls */
+  S.rooms=[];
   uid=d.uidSeq||1000;
   $('#pname').value=S.name;
   ['oWall','oCeil','oDoor','oWin','oSill'].forEach(id=>{
@@ -136,9 +157,16 @@ async function listProjects(){
     q.forEach(d=>{
       const v=d.data(), b=document.createElement('button');
       b.className='rec';
-      b.innerHTML=`<span>${escapeHtml(v.name||'ללא שם')}</span><span class="when">${when(v.updatedAt)}</span>`;
+      b.innerHTML=`<span class="nm">${escapeHtml(v.name||'ללא שם')}</span><span class="when">${when(v.updatedAt)}</span>`;
       b.onclick=()=>openProject(d.id);
-      list.appendChild(b);
+      const row=document.createElement('div'); row.className='rec-row';
+      const del=document.createElement('button');
+      del.className='rec-del'; del.type='button';
+      del.setAttribute('aria-label','מחיקת '+(v.name||'התוכנית'));
+      del.innerHTML='<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/></svg>';
+      del.onclick=e=>{ e.stopPropagation(); deleteProject(d.id,v.name||'התוכנית'); };
+      row.appendChild(b); row.appendChild(del);
+      list.appendChild(row);
     });
   }catch(e){ console.warn('[list]',e); }
 }
@@ -150,6 +178,19 @@ function when(ts){
   if(d<7) return Math.floor(d)+'d ago';
   return new Date(ts).toLocaleDateString([],{day:'numeric',month:'short'});
 }
+async function deleteProject(id,name){
+  if(!Cloud.on) return;
+  if(!confirm('למחוק את "'+name+'"? אי אפשר לשחזר.')) return;
+  try{
+    await Cloud.db.collection('projects').doc(id).delete();
+    try{ await Cloud.st.ref(`plans/${Cloud.uid}/${id}.pdf`).delete(); }
+    catch(e){ console.warn('[del pdf]',e); }   // the doc is gone either way
+    if(S.projectId===id) S.projectId=null;
+    toast('התוכנית נמחקה.');
+    listProjects();
+  }catch(e){ console.error(e); toast('לא הצלחנו למחוק את התוכנית.'); }
+}
+
 async function openProject(id){
   try{
     say('פותח…');
@@ -158,6 +199,8 @@ async function openProject(id){
     S.projectId=id; hydrate(doc.data());
     const bytes=await Cloud.getPDF(id);
     await openBytes(bytes,S.pdfName||'plan.pdf',doc.data().pageNum||1);
+    S.rooms=findRooms();
+    if(S.walls.length>=3&&S.mpp) raise();
     refresh(); draw();
     setSave('Saved','ok');
     say(S.mpp?'אפשר להמשיך לסמן.':'קבעו קנה מידה כדי להתחיל.');
@@ -1354,6 +1397,7 @@ function refresh(){
      model already existed, which hid the one sentence explaining how to get one. */
   const raiseNow=$('#tRaise'), stageRaise=$('#stageRaise');
   raiseNow.classList.toggle('ready',ready&&!S.raised);
+  $('#swapModel').disabled=!S.raised;
   if(!S.raised){
     const pct=Math.min(100,Math.round(n/NEED_WALLS*100));
     $('#meterFill').style.width=pct+'%';
@@ -1369,6 +1413,16 @@ function refresh(){
   }
 }
 $('#stageRaise').onclick=raise;
+
+/* phone: one pane at a time */
+function setMobileView(v){
+  document.body.classList.toggle('m-model',v==='model');
+  $('#swapPlan').setAttribute('aria-pressed',String(v!=='model'));
+  $('#swapModel').setAttribute('aria-pressed',String(v==='model'));
+  requestAnimationFrame(()=>{ sizeCanvas(); draw(); resize3D(); });
+}
+$('#swapPlan').onclick=()=>setMobileView('plan');
+$('#swapModel').onclick=()=>setMobileView('model');
 $('#tAuto').onclick=proposeWalls;
 $('#propAccept').onclick=()=>acceptProposal();
 $('#propCancel').onclick=cancelProposal;
@@ -2223,10 +2277,13 @@ function applyEnv(){
   renderer.toneMappingExposure=r?.92:1;
 }
 function raise(){
-  if(!live('#tRaise')) return;
+  /* the precondition, not the button's visibility — on a phone the instrument
+     is hidden until you are in the model view, which you reach BY raising */
+  if($('#tRaise').disabled) return;
   $('#stageBar').hidden=false;
   build3D(); S.raised=true; raiseT=0; raising=true;
   requestAnimationFrame(resize3D); refresh();
+  if(matchMedia('(max-width:900px)').matches) setMobileView('model');
   say('גררו כדי להסתובב. עברו לרנדור כשהצורה נכונה.');
 }
 $('#mModel').onclick=()=>setMode('model');
@@ -2259,93 +2316,6 @@ function setCam(c){
   }
 }
 $('#expand').onclick=()=>{ bodyEl.classList.toggle('wide3d'); requestAnimationFrame(resize3D); };
-
-/* ══ photoreal render ═══════════════════════════════════════════════
-   The geometry is measured, which is the whole advantage — the model is never
-   asked to invent a room, only to paint the one we already know. The frame goes
-   to a Cloud Function; the API key lives there and never reaches this file. */
-let shotStyle='day', shotResult=null;
-
-function capturePass(material,bg){
-  const pm=scene.overrideMaterial, pb=scene.background, pf=scene.fog, pe=scene.environment;
-  scene.overrideMaterial=material||null;
-  if(material){ scene.background=new THREE.Color(bg); scene.fog=null; scene.environment=null; }
-  renderer.render(scene,camera);
-  const url=renderer.domElement.toDataURL('image/jpeg',material?.isMeshDepthMaterial?1:.92);
-  scene.overrideMaterial=pm; scene.background=pb; scene.fog=pf; scene.environment=pe;
-  renderer.render(scene,camera);
-  return url;
-}
-/* Depth and normal passes as well as the beauty frame: a provider that can be
-   structurally conditioned should be handed the geometry directly rather than
-   asked to infer it. Gemini takes the beauty frame; the buffers are captured
-   and passed through so a ControlNet-style backend can be dropped in. */
-function captureBuffers(){
-  if(!renderer||!shell) return null;
-  const pr=renderer.getPixelRatio(), r=stage.getBoundingClientRect();
-  renderer.setPixelRatio(Math.min(2,Math.max(1,1280/Math.max(r.width,1))));
-  renderer.setSize(r.width,r.height,false);
-  const beauty=capturePass(null);
-  const depth=capturePass(new THREE.MeshDepthMaterial(),0x000000);
-  const normal=capturePass(new THREE.MeshNormalMaterial(),0x8080ff);
-  renderer.setPixelRatio(pr); resize3D();
-  return {beauty,depth,normal};
-}
-
-function openShot(){
-  if(!S.raised||!renderer){ toast('קודם הרימו את הקירות.'); return; }
-  const buf=captureBuffers(); if(!buf) return;
-  S.shotBuffers=buf; shotResult=null;
-  $('#shotBefore').src=buf.beauty;
-  $('#shotAfter').hidden=true; $('#shotWait').hidden=true;
-  $('#shotSave').disabled=true;
-  $('#shotMsg').textContent='בחרו אווירה ולחצו רנדרו.';
-  $('#shot').hidden=false;
-}
-function closeShot(){ $('#shot').hidden=true; }
-$('#shoot').onclick=openShot;
-$('#shotClose').onclick=closeShot;
-$('#shot').addEventListener('click',e=>{ if(e.target.id==='shot') closeShot(); });
-addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('#shot').hidden) closeShot(); });
-$('#shotStyles').addEventListener('click',e=>{
-  const b=e.target.closest('button[data-s]'); if(!b) return;
-  shotStyle=b.dataset.s;
-  $('#shotStyles').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
-});
-
-$('#shotGo').onclick=async()=>{
-  if(!S.shotBuffers) return;
-  if(!Cloud.on||!Cloud.fn){
-    $('#shotMsg').textContent='הרנדור רץ בשרת, וכרגע אין חיבור. בדקו את החיבור ונסו שוב.';
-    return;
-  }
-  $('#shotWait').hidden=false; $('#shotAfter').hidden=true;
-  $('#shotMsg').textContent=''; $('#shotGo').disabled=true; $('#shotSave').disabled=true;
-  try{
-    const call=Cloud.fn.httpsCallable('renderView');
-    const res=await call({beauty:S.shotBuffers.beauty,style:shotStyle,note:$('#shotNote').value||''});
-    const d=res.data||{};
-    if(!d.ok){
-      $('#shotMsg').textContent=d.message||'הרנדור לא הצליח.';
-    }else{
-      shotResult=d.image;
-      $('#shotAfter').src=d.image; $('#shotAfter').hidden=false;
-      $('#shotMsg').textContent='';
-      $('#shotSave').disabled=false;
-      if(d.limit) say('רונדר. נותרו '+(d.limit-d.used)+' רנדורים היום.');
-    }
-  }catch(e){
-    console.error('[render]',e);
-    $('#shotMsg').textContent=(e&&e.message)||'הרנדור לא הצליח.';
-  }finally{
-    $('#shotWait').hidden=true; $('#shotGo').disabled=false;
-  }
-};
-$('#shotSave').onclick=()=>{
-  if(!shotResult) return;
-  download(shotResult,slug()+'-render.png');
-  toast('התמונה נשמרה.');
-};
 
 /* ══ export ═════════════════════════════════════════════════════════ */
 function download(url,name){

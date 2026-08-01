@@ -78,8 +78,11 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
 .btn.lg{height:44px;padding:0 20px;font-size:15px;border-radius:var(--r)}
 
 /* ── body grid ──────────────────────────────────────────────────── */
-#body{display:grid;grid-template-columns:minmax(0,1fr) 400px 60px;min-height:0}
-#body.wide3d{grid-template-columns:minmax(0,1fr) 62% 60px}
+/* half the page is the sheet, half is the model. The model used to get 400px
+   against everything else, which made the thing you came for the smallest
+   pane on screen. */
+#body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 60px;min-height:0}
+#body.wide3d{grid-template-columns:minmax(0,22%) minmax(0,1fr) 60px}
 
 /* ── plan ───────────────────────────────────────────────────────── */
 #plan{position:relative;background:var(--mat);overflow:hidden;min-width:0}
@@ -105,9 +108,15 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
 .hint{font-size:13px;color:var(--ink-2);margin-top:14px}
 #recent{margin-top:24px;padding-top:18px;border-top:1px solid var(--line-soft)}
 #recent h4{font-size:11px;letter-spacing:.06em;color:var(--ink-2);font-weight:600;margin-bottom:8px}
-.rec{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:9px 10px;border:0;
+.rec-row{display:flex;align-items:center;gap:2px;border-radius:var(--r-sm)}
+.rec-row:hover{background:var(--panel-2)}
+.rec{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:1;min-width:0;padding:9px 10px;border:0;
   background:transparent;font:inherit;font-size:14px;color:var(--ink);text-align:start;cursor:pointer;border-radius:var(--r-sm)}
-.rec:hover{background:var(--panel-2)}
+.rec .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rec-del{width:32px;height:32px;flex-shrink:0;border:0;background:transparent;color:var(--ink-2);border-radius:var(--r-sm);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity var(--t-fast),color var(--t-fast)}
+.rec-row:hover .rec-del,.rec-del:focus-visible{opacity:1}
+.rec-del:hover{color:var(--blade);background:var(--panel-3)}
 .rec .when{font-family:"Archivo Narrow";font-size:12px;color:var(--ink-2);flex-shrink:0}
 
 /* ── calibration popover ────────────────────────────────────────── */
@@ -230,53 +239,40 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
 #exp button:disabled{opacity:.4;cursor:not-allowed}
 #exp button small{font-family:"Archivo Narrow";font-size:12px;color:var(--ink-2);direction:ltr}
 
-/* the render sheet — the one place in the product that shows a picture the
-   software made rather than measured, so it shows the source beside it */
-#shot{position:fixed;inset:0;z-index:80;background:rgba(34,32,29,.55);display:flex;
-  align-items:center;justify-content:center;padding:28px;backdrop-filter:blur(3px)}
-#shot .sheet{width:min(1180px,100%);max-height:100%;display:flex;flex-direction:column;
-  background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-3);overflow:hidden}
-#shot header{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
-#shot header .t{font-size:16px;font-weight:700}
-#shot header .d{font-size:13px;color:var(--ink-2)}
-#shot .body{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:16px;min-height:0;overflow:auto}
-#shot .pane{position:relative;background:var(--panel-3);border-radius:var(--r);overflow:hidden;
-  display:flex;align-items:center;justify-content:center;min-height:240px}
-#shot .pane img{width:100%;height:100%;object-fit:contain;display:block}
-#shot .cap{position:absolute;inset-inline-start:10px;top:10px;background:rgba(34,32,29,.72);color:var(--panel);
-  font-size:12px;padding:3px 9px;border-radius:99px}
-#shot .wait{display:flex;flex-direction:column;align-items:center;gap:12px;color:var(--ink-2);font-size:14px}
-#shot .spin{width:26px;height:26px;border:2.5px solid var(--line-2);border-top-color:var(--ink);
-  border-radius:99px;animation:spin 900ms linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-#shot .msg{padding:20px;text-align:center;font-size:14px;color:var(--ink-2);max-width:34ch}
-#shot footer{display:flex;align-items:center;gap:10px;padding:14px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
-#shot .styles{display:inline-flex;background:var(--panel-3);border-radius:99px;padding:3px;gap:2px}
-#shot .styles button{height:30px;padding:0 13px;border:0;border-radius:99px;background:transparent;font:inherit;
-  font-size:13px;font-weight:500;color:var(--ink-2);cursor:pointer}
-#shot .styles button[aria-pressed="true"]{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:var(--sh-1)}
-#shotNote{flex:1 1 220px;min-width:0;height:36px;border:1px solid var(--line-2);border-radius:var(--r-sm);
-  background:var(--sheet);padding:0 11px;font:inherit;font-size:13.5px;color:var(--ink)}
-#shotNote:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px var(--rule-wash)}
-@media (max-width:820px){ #shot .body{grid-template-columns:1fr} }
-
 #toast{position:fixed;inset-inline-start:50%;bottom:50px;transform:translateX(50%) translateY(10px);z-index:70;
   background:var(--ink);color:var(--panel);padding:12px 18px;border-radius:var(--r);font-size:14px;opacity:0;
   pointer-events:none;transition:opacity var(--t),transform var(--t);box-shadow:var(--sh-3);max-width:min(460px,86vw)}
 #toast.on{opacity:1;transform:translateX(50%) translateY(0)}
 
+/* On a phone the two panes do not share a screen — you are on the sheet or you
+   are in the model, and whichever you are on gets the whole width. */
+#viewSwap{display:none}
 @media (max-width:900px){
   #body,#body.wide3d{grid-template-columns:minmax(0,1fr) 56px}
-  #stage{display:none}
+  #plan,#stage{grid-column:1;grid-row:1}
+  body:not(.m-model) #stage{display:none}
+  body.m-model #plan{display:none}
   #top{gap:10px;padding:0 10px}
-  #pname{width:auto;flex:1 1 80px}
+  #pname{width:auto;flex:1 1 60px}
   .brand-name,#saveState,#newBtn{display:none}
-  #tRaise,#tExp,#railSep{display:none}
+  #railSep{display:none}
   #chipScale .lbl{display:none}
   .tool{width:38px;height:38px}
   #propBar,#autoBar{flex-wrap:wrap;gap:8px}
   #propBar .d,#autoBar .d{display:none}
   #rail{width:56px}
+  #stageBar{height:44px}
+  /* instruments that act on the sheet step aside once you are in the model */
+  body.m-model #tSelect,body.m-model #tCal,body.m-model #tWall,
+  body.m-model #tDoor,body.m-model #tWin,body.m-model #tAuto,
+  body.m-model #tUndo,body.m-model #tClear,body.m-model #zoom{display:none}
+  body:not(.m-model) #tExp{display:none}
+  #viewSwap{display:inline-flex;position:fixed;inset-inline-start:50%;transform:translateX(50%);
+    bottom:42px;z-index:30;background:var(--ink);border-radius:99px;padding:4px;gap:2px;box-shadow:var(--sh-3)}
+  #viewSwap button{height:34px;padding:0 18px;border:0;border-radius:99px;background:transparent;font:inherit;
+    font-size:13.5px;font-weight:600;color:var(--panel);cursor:pointer}
+  #viewSwap button[aria-pressed="true"]{background:var(--rule);color:var(--ink)}
+  #viewSwap button:disabled{opacity:.45;cursor:not-allowed}
 }
 @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms !important;animation:none !important}}
 </style>
@@ -395,10 +391,6 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
           <button id="vEye" aria-pressed="false">גובה עיניים</button>
         </div>
         <span class="spacer"></span>
-        <button class="btn sm" id="shoot">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
-            <path d="M1.5 5.5h3l1-2h5l1 2h3v8h-13z"/><circle cx="8" cy="9" r="2.6"/></svg>
-          צלמו את המבט</button>
         <button class="btn sq ghost" id="expand" aria-label="הגדלת חלונית המודל">
           <svg width="15" height="15" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4.5 1.5h-3v3M7.5 10.5h3v-3"/></svg></button>
       </div>
@@ -466,43 +458,6 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
     </nav>
   </div>
 
-  <div id="shot" hidden>
-    <div class="sheet">
-      <header>
-        <span class="t">רנדור פוטוריאליסטי</span>
-        <span class="d">הגיאומטריה נמדדה וננעלת — המודל רק צובע אותה</span>
-        <span class="spacer"></span>
-        <button class="btn sq ghost" id="shotClose" aria-label="סגירה">
-          <svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
-      </header>
-      <div class="body">
-        <div class="pane">
-          <img id="shotBefore" alt="המבט מהמודל">
-          <span class="cap">המבט שנשלח</span>
-        </div>
-        <div class="pane">
-          <img id="shotAfter" alt="התוצאה" hidden>
-          <div id="shotWait" class="wait" hidden><span class="spin"></span><span>מרנדר…</span></div>
-          <div id="shotMsg" class="msg"></div>
-          <span class="cap">התוצאה</span>
-        </div>
-      </div>
-      <footer>
-        <div class="styles" id="shotStyles" role="group" aria-label="אווירה">
-          <button data-s="day" aria-pressed="true">אור יום</button>
-          <button data-s="evening" aria-pressed="false">ערב</button>
-          <button data-s="overcast" aria-pressed="false">מעונן</button>
-          <button data-s="warm" aria-pressed="false">חמים</button>
-          <button data-s="minimal" aria-pressed="false">מינימלי</button>
-        </div>
-        <input id="shotNote" placeholder="משהו להוסיף? למשל: פרקט אלון בהיר, צמחייה">
-        <span class="spacer"></span>
-        <button class="btn" id="shotSave" disabled>שמירת התמונה</button>
-        <button class="btn primary" id="shotGo">רנדרו</button>
-      </footer>
-    </div>
-  </div>
-
   <footer id="status">
     <span id="msg">פתחו קובץ PDF כדי להתחיל.</span>
     <span class="spacer"></span>
@@ -512,6 +467,11 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
   </footer>
 </div>
 
+<div id="viewSwap" role="group" aria-label="מעבר בין התוכנית למודל">
+  <button id="swapPlan" aria-pressed="true">התוכנית</button>
+  <button id="swapModel" aria-pressed="false" disabled>המודל</button>
+</div>
+
 <div class="tip" id="tip"></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
@@ -519,7 +479,6 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <script src="./firebase-config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>

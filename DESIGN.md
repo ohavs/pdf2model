@@ -111,6 +111,25 @@ outline at 1px offset, on canvas handles as well as buttons.
   poché and on white paper alike — and a run switched off goes to a thin blade-red dash. A bar
   over the sheet carries the count and the three verbs. Yellow stays out of it: a proposal is
   not a selection, not a measurement, and not an instrument.
+- **Nine snap marks, one language.** A square on one of the user's own corners, a diamond on a
+  corner belonging to the drawing, a triangle at mid-span, a cross at the intersection of two
+  wall lines, a draughtsman's right angle for perpendicular, an arrow off a bar for a wall's
+  extension, two slashes for parallel, a plus for the angle lock, a filled dot for the grid. All
+  in `--rule`, because all of them are the live measurement. Each also draws its **guide** — the
+  line that explains it — in dashed graphite, never yellow: the yellow marks the point that was
+  caught, and the guide is the reason, not the result. A perpendicular or parallel additionally
+  brackets the wall it answers to. Alt drops every inference while held; Shift leaves only the
+  corners the user placed. The same nine glyphs appear beside their names in the magnets popover,
+  so the popover teaches the canvas.
+- **Handles are the selection made grabbable.** A square on a corner you can move, a disc at
+  mid-span that slides the whole wall, a bar across each edge of an opening that widens it.
+  `--rule` filled, graphite ringed, with a white halo underneath — the wall behind them is
+  already yellow, and yellow on yellow is not a handle. A selected wall's dimension steps off
+  the line, because the mid handle lands exactly where the number was lettered.
+- **The properties panel floats over the sheet, never beside it.** Opposite the zoom control, at
+  the plan pane's bottom edge. The plan is the subject and does not shrink because something was
+  selected. A typed value that would put a corner off the sheet is refused with a reason;
+  clamping it would return a wrong angle and a wrong length in place of one honest refusal.
 - **Three snap marks, one language.** A square on one of the user's own corners, a **diamond on a
   corner belonging to the drawing itself**, a cross on the 45° lock. All in `--rule`, because all
   three are the live measurement. Shift suppresses everything the software inferred and leaves the
@@ -153,4 +172,8 @@ config never reaches: 0 below AA, lowest 4.59:1. Open items below.
   model has no ceiling either, so the sky is overhead from inside.
 - Floors are correct only for closed traced loops; an open trace falls back to a bounding slab.
 - Materials are procedural canvas textures, not a scanned PBR library.
-- Single storey. No furniture. No AI rendering path yet.
+- Single storey. Furniture is procedural boxes: every free source of real GLB furniture and PBR
+  material is blocked by this environment's network policy, and the one reachable set is a glTF
+  conformance suite rather than a library. See item 6 of the queue in `CLAUDE.md`.
+- No AI rendering path, and none is planned — it is billed per call and the cost constraint on
+  this project is absolute.

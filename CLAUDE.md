@@ -137,18 +137,66 @@ live backend round trip.
    and behaves as before. **Endpoints only** — segments are discarded after their endpoints are
    taken, so there is no snap to a point *along* a wall, and no perpendicular or midpoint snap.
    That is the obvious next increment.
-4. **Tune the detector on real plans.** `detectWalls()` finds the envelope and every partition
+4. **Tune the detector on real plans.** *(Partly addressed: the thickness the detector measures
+   off the drawing's poché is now carried into the model instead of being discarded, so an
+   envelope and a partition no longer come out identical — 18 walls spanning 0.10 m to 0.25 m on
+   the test sheet. The ranking work below is still open.)* `detectWalls()` finds the envelope and every partition
    on a 1:50 test sheet — 21 runs from 188 segments — but it also proposes fixtures and joinery
    as short runs, and it has never been measured against a 1:100 sheet with thinner walls or
    against Israeli drafting conventions. The review step absorbs the noise, but the ranking is
    the thing to improve: prefer long, well-supported runs, and consider dropping candidates that
    sit inside a room rather than on its boundary. Needs real plans to tune against, not
    synthetic ones.
-5. **Photoreal render path.** A Cloud Function that takes the depth and normal buffers from the
-   existing three.js camera plus a style prompt and returns an image. The geometry is already
-   exact, which is the whole advantage — the model only paints it. Key stays server-side.
-6. **Interior content.** Curated PBR materials and a small furniture library in GLB. This is the
-   product's stated centre of gravity and currently its thinnest part.
+5. ~~**Photoreal render path.**~~ Removed, on the owner's instruction. Every hosted image model
+   is billed per call and the owner's constraint is absolute: not one cent. The Cloud Function,
+   its API key, its secret and the whole `functions/` directory were deleted. Do not rebuild
+   this without an explicit new instruction.
+
+6. **Interior content — blocked on network policy, not on code.** Every source of free
+   production-grade assets is unreachable from this sandbox's egress policy:
+
+   | host | what it has | status |
+   |---|---|---|
+   | `ambientcg.com` | CC0 PBR materials — flooring, plaster, tile | **blocked** |
+   | `cdn.polyhaven.com`, `api.polyhaven.com` | CC0 HDRIs, textures, models | **blocked** |
+   | `kenney.nl` | CC0 low-poly furniture, ~100 KB a piece — the right size for this | **blocked** |
+   | `cdn.jsdelivr.net`, `unpkg.com` | npm/GitHub CDN mirrors | **blocked** |
+   | `raw.githubusercontent.com` | reachable, `access-control-allow-origin: *` | reachable |
+   | `registry.npmjs.org` | reachable | reachable |
+
+   The one reachable model source is `KhronosGroup/glTF-Sample-Assets`, and it is a **glTF
+   conformance test suite, not a furniture library**. Of 148 models the usable interior pieces
+   are two — `GlamVelvetSofa` (3.1 MB, CC-BY-4.0) and `SheenChair` (4.1 MB, CC0) — and both
+   lean on `KHR_materials_sheen` and `KHR_materials_variants`, which the r128 GLTFLoader does
+   not fully support, so they would render without the material they exist to demonstrate.
+   7 MB for two pieces that come out wrong is not interior content; it was not shipped.
+
+   Note the size question is **not** a hosting-cost question. Assets fetched by the visitor's
+   browser from a third-party CDN never touch Firebase Hosting's quota. The objection is the
+   visitor's bandwidth and the wrong-tool-for-the-job shape of these particular files.
+
+   To unblock, either:
+   - allow `ambientcg.com`, `kenney.nl` and `polyhaven.com` (plus `cdn.polyhaven.com`) in the
+     environment's network policy, and the assets can be vendored and wired; or
+   - drop the asset files into `public/assets/` by hand and the same work proceeds offline.
+
+   When it is unblocked: `furnishRoom()` in `app.js` already computes a position, footprint and
+   rotation for every piece it places. Tag those meshes with a slot descriptor, load the GLB
+   lazily, fit it to the slot's bounding box and swap — the procedural furniture stays as the
+   instant first frame and as the fallback, so nothing blocks on a download.
+
+7. **The editor.** Six phases, all but the assets one done and live.
+   1. ~~Identity, named history, incremental rebuild.~~
+   2. ~~Selection as a set; handles; marquee; nudging.~~
+   3. ~~The snap engine: nine magnets, guides, Alt/Shift suppression, a settings popover.~~
+   4. ~~The properties panel: every number editable, type-while-dragging, off-sheet refused.~~
+   5. Assets — see item 6.
+   6. ~~Operations: duplicate, offset, series, split, weld, straighten, mirror, align,
+      distribute, axis lock.~~
+
+   Harnesses in the session scratchpad, all passing: `seltest.js` (27), `snaptest.js` (17),
+   `proptest.js` (29), `opstest.js` (35), plus `histtest.js`, `layouttest.js`, `autotest.js`
+   and `contrast.js` (148 text elements, 0 below AA).
 
 Out of scope until asked: multi-storey, exteriors and roofs, DWG import, construction documents.
 

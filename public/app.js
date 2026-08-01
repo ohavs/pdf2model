@@ -528,7 +528,7 @@ function detectWalls(){
     }
   }
   cands.sort((a,b)=>dist(b.a,b.b)-dist(a.a,a.b));
-  return splitTees(joinRuns(mergeCollinear(cands,px(0.12)),px(DET.joinTol)),px(0.30));
+  return joinRuns(weldRuns(mergeCollinear(cands,px(0.12)),px(0.85)),px(0.10));
 }
 
 /* two candidates on the same line that overlap or nearly touch are one wall */
@@ -555,37 +555,48 @@ function mergeCollinear(cands,tol){
   return out;
 }
 
-/* A partition meets the middle of another wall, not its end. Land that endpoint
-   on the wall and split the wall there, or the graph keeps a dangling stub and
-   no room ever closes — the whole plan came back as a single face. */
-function splitTees(runs,tol){
-  for(let pass=0;pass<4;pass++){
-    let cut=false;
-    for(let i=0;i<runs.length&&runs.length<400;i++){
-      const A=runs[i];
-      for(const k of ['a','b']){
-        const e=A[k];
-        for(let j=0;j<runs.length;j++){
-          if(j===i) continue;
-          const B=runs[j];
-          const vx=B.b.x-B.a.x, vy=B.b.y-B.a.y, L2=vx*vx+vy*vy;
-          if(L2<1) continue;
-          const t=((e.x-B.a.x)*vx+(e.y-B.a.y)*vy)/L2;
-          if(t<=0.02||t>=0.98) continue;                       // that is a corner, not a tee
-          const px2=B.a.x+vx*t, py2=B.a.y+vy*t;
-          if(Math.hypot(e.x-px2,e.y-py2)>tol) continue;
-          const hit={x:px2,y:py2};
-          if(Math.min(dist(B.a,hit),dist(B.b,hit))<tol*0.5) continue;
-          A[k]={...hit};
-          runs.push({a:{...hit},b:{...B.b},th:B.th,t:B.t});
-          B.b={...hit};
-          cut=true;
-        }
+/* Weld the network. Two wall centrelines that ought to meet almost never do:
+   each one stops at the FACE of the wall it runs into, half a thickness short,
+   and a corner between two 25cm walls leaves both ends 12cm from where the
+   corner actually is. Averaging those endpoints put the corner in the wrong
+   place and left the graph a forest — 26 loose ends out of 27 nodes, and not a
+   single room closed.
+
+   So do the geometry instead: intersect the two infinite lines. That point IS
+   the corner. Extend a run to reach it, trim a run that overshoots it, and split
+   a run the point lands in the middle of, which is a tee. */
+function weldRuns(runs,reach){
+  const touch=(idx,t,P)=>{
+    const R=runs[idx];
+    if(t<=0.02){ if(dist(R.a,P)<1) return false; R.a={...P}; return true; }
+    if(t>=0.98){ if(dist(R.b,P)<1) return false; R.b={...P}; return true; }
+    if(dist(R.a,P)<2||dist(R.b,P)<2) return false;
+    runs.push({a:{...P},b:{...R.b},th:R.th,th2:R.th,t:R.t});
+    R.b={...P};
+    return true;
+  };
+  for(let pass=0;pass<6;pass++){
+    let changed=false;
+    for(let i=0;i<runs.length&&runs.length<500;i++){
+      for(let j=i+1;j<runs.length&&runs.length<500;j++){
+        const A=runs[i], B=runs[j];
+        const ax=A.b.x-A.a.x, ay=A.b.y-A.a.y, bx=B.b.x-B.a.x, by=B.b.y-B.a.y;
+        const LA=Math.hypot(ax,ay), LB=Math.hypot(bx,by);
+        if(LA<1||LB<1) continue;
+        const den=ax*by-ay*bx;
+        if(Math.abs(den)/(LA*LB)<0.34) continue;        // under ~20°, they are parallel
+        const dx=B.a.x-A.a.x, dy=B.a.y-A.a.y;
+        const t=(dx*by-dy*bx)/den, u=(dx*ay-dy*ax)/den;
+        const rA=reach/LA, rB=reach/LB;
+        if(t<-rA||t>1+rA||u<-rB||u>1+rB) continue;
+        const P={x:A.a.x+ax*t,y:A.a.y+ay*t};
+        if(touch(i,t,P)) changed=true;
+        if(touch(j,u,P)) changed=true;
       }
     }
-    if(!cut) break;
+    if(!changed) break;
   }
-  return runs.filter(r=>dist(r.a,r.b)>1);
+  return runs.filter(r=>dist(r.a,r.b)>2);
 }
 
 /* pull endpoints that nearly meet onto one shared corner, so the runs connect */
@@ -697,49 +708,169 @@ function syncProposal(){
   $('#propAccept').disabled=!on;
 }
 
-/* Walk the wall graph's planar faces: from each directed half-edge, always turn
-   as tightly as possible. Every bounded face is a room, and a room is a floor.
-   PARTIAL: on a detected plan this reliably closes the outer envelope but not
-   the interior rooms, even though splitTees does produce the three-way nodes
-   the interior cycles need — measured 8 of them and still only two faces. Until
-   that is understood the model falls back to a slab under the footprint, which
-   is correct for the envelope and wrong for an L-shaped plan. A hand-traced
-   closed loop still becomes its own floor, as it always did. */
-function findRooms(){
-  const adj=new Map();
-  const add=(a,b)=>{ const l=adj.get(a); if(l) l.push(b); else adj.set(a,[b]); };
-  for(const w of S.walls){ if(w.a===w.b) continue; add(w.a,w.b); add(w.b,w.a); }
-  if(!adj.size) return [];
-  const ang=(a,b)=>{ const p=node(a),q=node(b); return p&&q?Math.atan2(q.y-p.y,q.x-p.x):0; };
-  for(const [k,l] of adj) l.sort((x,y)=>ang(k,x)-ang(k,y));
+/* Rooms by flood fill, not by graph topology.
 
-  const seen=new Set(), faces=[];
-  for(const [a,l] of adj) for(const b of l){
-    if(seen.has(a+'>'+b)) continue;
-    const loop=[]; let ca=a, cb=b, guard=0;
-    while(guard++<4000){
-      if(seen.has(ca+'>'+cb)) break;
-      seen.add(ca+'>'+cb); loop.push(ca);
-      const nb=adj.get(cb); if(!nb||!nb.length) break;
-      const back=ang(cb,ca);
-      /* the next edge clockwise from the one we came in on */
-      let pick=nb[0], bestD=Infinity;
-      for(const c of nb){
-        let d=back-ang(cb,c); d=(d%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
-        if(d<1e-9) d=Math.PI*2;
-        if(d<bestD){ bestD=d; pick=c; }
-      }
-      ca=cb; cb=pick;
-      if(ca===a&&cb===b) break;
-    }
-    if(loop.length>=3) faces.push(loop);
+   Chasing planar faces through the wall graph never worked and was never going
+   to: detected centrelines come out fragmented, a corner is two runs that stop
+   short of each other, and one sub-centimetre gap anywhere turns a room into
+   part of the outside. Measured on a clean 1:50 sheet — 26 loose ends out of 27
+   nodes, one face.
+
+   So stop reasoning about topology. Paint the walls into a grid, flood the
+   outside from the border, and whatever is left enclosed is a room. A gap
+   narrower than the wall thickness cannot leak, which is exactly the tolerance
+   a drawing needs. Out comes a polygon per room, which is what floors, and
+   later furniture, actually want. */
+function findRooms(){
+  if(!S.mpp||!S.walls.length) return [];
+  const cell=Math.max(2,(0.06/S.mpp));
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  for(const w of S.walls){
+    const a=node(w.a),b=node(w.b); if(!a||!b) continue;
+    minX=Math.min(minX,a.x,b.x); maxX=Math.max(maxX,a.x,b.x);
+    minY=Math.min(minY,a.y,b.y); maxY=Math.max(maxY,a.y,b.y);
   }
-  const area=l=>{ let A=0; for(let i=0;i<l.length;i++){ const p=node(l[i]),q=node(l[(i+1)%l.length]);
-    if(!p||!q) return 0; A+=p.x*q.y-q.x*p.y; } return A/2; };
-  const minA=(1.2/(S.mpp*S.mpp));                      // ignore anything under 1.2 m²
-  return faces.filter(f=>{ const A=area(f); return A<0&&Math.abs(A)>minA; })
-              .sort((x,y)=>Math.abs(area(y))-Math.abs(area(x)))
-              .slice(0,60);
+  if(minX>maxX) return [];
+  const pad=cell*4;
+  minX-=pad; minY-=pad; maxX+=pad; maxY+=pad;
+  const W=Math.ceil((maxX-minX)/cell), H=Math.ceil((maxY-minY)/cell);
+  if(W<6||H<6||W*H>700000) return [];
+
+  const wall=new Uint8Array(W*H);
+
+  /* Rooms are separated by walls, but a wall has a doorway in it, and at floor
+     level a doorway joins the two rooms into one region — so the fill leaked
+     through every door and returned the whole flat as a single room. Bridge the
+     gaps that are door-shaped: collinear, nearly touching, under 1.4 m. Only in
+     this grid; the model keeps its real openings. */
+  const segsOf=[];
+  for(const w of S.walls){
+    const a=node(w.a),b=node(w.b); if(!a||!b) continue;
+    segsOf.push({a,b,t:w.t,L:dist(a,b),th:Math.atan2(b.y-a.y,b.x-a.x)});
+  }
+  const bridges=[];
+  const maxGap=1.4/S.mpp;
+  for(let i=0;i<segsOf.length;i++)for(let j=i+1;j<segsOf.length;j++){
+    const A=segsOf[i], B=segsOf[j];
+    let d=Math.abs(A.th-B.th); d=Math.min(d,Math.PI-d);
+    if(d>0.18) continue;
+    const ux=Math.cos(A.th), uy=Math.sin(A.th), nx=-uy, ny=ux;
+    if(Math.abs((B.a.x-A.a.x)*nx+(B.a.y-A.a.y)*ny)>0.18/S.mpp) continue;
+    let best=null,bd=maxGap;
+    for(const p of [A.a,A.b])for(const q of [B.a,B.b]){
+      const g=dist(p,q);
+      if(g>0.02/S.mpp&&g<bd){ bd=g; best=[p,q]; }
+    }
+    if(best) bridges.push({a:best[0],b:best[1],t:Math.max(A.t||0,B.t||0)});
+  }
+
+  for(const w of segsOf.concat(bridges)){
+    const a=w.a,b=w.b;
+    const th=Math.max(S.dims.wall,(w.t||0))/S.mpp;
+    const half=Math.max(1,Math.round(th/cell/2));
+    const x0=(a.x-minX)/cell,y0=(a.y-minY)/cell,x1=(b.x-minX)/cell,y1=(b.y-minY)/cell;
+    const n=Math.max(1,Math.ceil(Math.hypot(x1-x0,y1-y0)));
+    /* eslint-disable-next-line */
+    for(let i=0;i<=n;i++){
+      const gx=Math.round(x0+(x1-x0)*i/n), gy=Math.round(y0+(y1-y0)*i/n);
+      for(let dy=-half;dy<=half;dy++)for(let dx=-half;dx<=half;dx++){
+        const X=gx+dx,Y=gy+dy;
+        if(X>=0&&Y>=0&&X<W&&Y<H) wall[Y*W+X]=1;
+      }
+    }
+  }
+
+  /* everything reachable from the border without crossing a wall is outside */
+  const mark=new Int32Array(W*H).fill(0);
+  const stack=[];
+  const push=(x,y)=>{ const k=y*W+x; if(x<0||y<0||x>=W||y>=H||wall[k]||mark[k]) return; mark[k]=-1; stack.push(k); };
+  for(let x=0;x<W;x++){ push(x,0); push(x,H-1); }
+  for(let y=0;y<H;y++){ push(0,y); push(W-1,y); }
+  while(stack.length){
+    const k=stack.pop(), x=k%W, y=(k-x)/W;
+    push(x+1,y); push(x-1,y); push(x,y+1); push(x,y-1);
+  }
+
+  /* what is left enclosed, grouped */
+  const rooms=[]; let label=0;
+  const minCells=Math.max(12,Math.round(1.5/(S.mpp*S.mpp)/(cell*cell)));
+  for(let k0=0;k0<W*H;k0++){
+    if(wall[k0]||mark[k0]) continue;
+    label++; const cells=[]; const st=[k0]; mark[k0]=label;
+    while(st.length){
+      const k=st.pop(); cells.push(k);
+      const x=k%W, y=(k-x)/W;
+      const nb=[[x+1,y],[x-1,y],[x,y+1],[x,y-1]];
+      for(const [nx,ny] of nb){
+        if(nx<0||ny<0||nx>=W||ny>=H) continue;
+        const kk=ny*W+nx;
+        if(wall[kk]||mark[kk]) continue;
+        mark[kk]=label; st.push(kk);
+      }
+    }
+    if(cells.length<minCells) continue;
+    const poly=traceMask(mark,W,H,label,cell,minX,minY);
+    if(poly&&poly.length>=3) rooms.push(poly);
+  }
+  rooms.sort((a,b)=>Math.abs(polyArea(b))-Math.abs(polyArea(a)));
+  return rooms.slice(0,40);
+}
+
+const polyArea=p=>{ let A=0; for(let i=0;i<p.length;i++){ const a=p[i],b=p[(i+1)%p.length]; A+=a.x*b.y-b.x*a.y; } return A/2; };
+
+/* boundary of a labelled region: collect the grid edges that face outward,
+   chain them into a loop, then straighten the staircase */
+function traceMask(mark,W,H,label,cell,ox,oy){
+  const edges=new Map();
+  const key=(x,y)=>x+','+y;
+  const addEdge=(x1,y1,x2,y2)=>{
+    const k=key(x1,y1), l=edges.get(k);
+    if(l) l.push([x2,y2]); else edges.set(k,[[x2,y2]]);
+  };
+  const inR=(x,y)=>x>=0&&y>=0&&x<W&&y<H&&mark[y*W+x]===label;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(mark[y*W+x]!==label) continue;
+    if(!inR(x,y-1)) addEdge(x,y,x+1,y);
+    if(!inR(x+1,y)) addEdge(x+1,y,x+1,y+1);
+    if(!inR(x,y+1)) addEdge(x+1,y+1,x,y+1);
+    if(!inR(x-1,y)) addEdge(x,y+1,x,y);
+  }
+  if(!edges.size) return null;
+  let start=null; for(const k of edges.keys()){ start=k; break; }
+  const loop=[]; let cur=start, guard=0;
+  while(guard++<200000){
+    const nx=edges.get(cur);
+    if(!nx||!nx.length) break;
+    const [x2,y2]=nx.shift();
+    if(!nx.length) edges.delete(cur);
+    const [cx,cy]=cur.split(',').map(Number);
+    loop.push({x:ox+cx*cell,y:oy+cy*cell});
+    cur=key(x2,y2);
+    if(cur===start) break;
+  }
+  if(loop.length<4) return null;
+  return simplify(loop,cell*1.6);
+}
+
+/* Douglas–Peucker, closed */
+function simplify(pts,tol){
+  const dp=(a,b,list)=>{
+    if(b<=a+1) return [];
+    let bi=-1, bd=tol;
+    const P=list[a], Q=list[b];
+    const dx=Q.x-P.x, dy=Q.y-P.y, L=Math.hypot(dx,dy)||1;
+    for(let i=a+1;i<b;i++){
+      const d=Math.abs((list[i].x-P.x)*dy-(list[i].y-P.y)*dx)/L;
+      if(d>bd){ bd=d; bi=i; }
+    }
+    if(bi<0) return [];
+    return [...dp(a,bi,list),list[bi],...dp(bi,b,list)];
+  };
+  const out=[pts[0],...dp(0,pts.length-1,pts),pts[pts.length-1]];
+  const clean=[];
+  for(const p of out) if(!clean.length||Math.hypot(p.x-clean[clean.length-1].x,p.y-clean[clean.length-1].y)>tol*0.4) clean.push(p);
+  if(clean.length>2&&Math.hypot(clean[0].x-clean[clean.length-1].x,clean[0].y-clean[clean.length-1].y)<tol) clean.pop();
+  return clean;
 }
 
 function acceptProposal(quiet){
@@ -757,7 +888,7 @@ function acceptProposal(quiet){
     const a=at(w.a), b=at(w.b);
     if(a!==b) S.walls.push({a,b,id:uid++});
   }
-  S.rooms=findRooms();
+  reroom();
   S.proposal=null; syncProposal();
   refresh(); draw(); touch(); if(S.raised) build3D();
   if(quiet===true) return;
@@ -851,7 +982,7 @@ function undo(){
   const p=JSON.parse(S.history.pop());
   S.nodes=p.n; S.walls=p.w; S.rooms=p.r; S.openings=p.o; S.chain=p.c; S.sel=null;
   if(!S.history.length) $('#tUndo').disabled=true;
-  refresh(); draw(); touch(); if(S.raised) build3D();
+  refresh(); draw(); touch(); reroom();
 }
 
 /* ══ tools ══════════════════════════════════════════════════════════ */
@@ -1002,12 +1133,12 @@ planEl.addEventListener('pointerdown',e=>{
       const prev=S.chain[S.chain.length-1];
       if(prev!==id) S.walls.push({a:prev,b:id,id:uid++});
       if(id===S.chain[0]&&S.chain.length>2){
-        S.rooms.push([...S.chain]); S.chain=[]; liveDim.textContent='';
+        S.chain=[]; liveDim.textContent=''; reroom();
         say('החדר נסגר. סמנו רצף נוסף, או הרימו.');
         refresh(); draw(); touch(); if(S.raised) build3D(); return;
       }
     }
-    S.chain.push(id); refresh(); draw(); touch(); if(S.raised) build3D(); return;
+    S.chain.push(id); refresh(); draw(); touch(); reroom(); return;
   }
   if(S.tool==='door'||S.tool==='window'){
     const hit=wallAt(p);
@@ -1087,7 +1218,7 @@ addEventListener('keydown',e=>{
       S.openings=S.openings.filter(o=>o.wall!==S.sel.i).map(o=>({...o,wall:o.wall>S.sel.i?o.wall-1:o.wall}));
       S.walls.splice(S.sel.i,1);
     }
-    S.sel=null; refresh(); draw(); touch(); if(S.raised) build3D();
+    S.sel=null; refresh(); draw(); touch(); reroom();
   }
 });
 addEventListener('keyup',e=>{ if(e.key==='Shift')keys.shift=false; if(e.code==='Space')keys.space=false; });
@@ -1146,6 +1277,11 @@ $('#lenIn').onkeydown=e=>{ if(e.key==='Enter'){e.preventDefault();applyLength();
 
 const NEED_WALLS=3;
 
+let reroomT;
+function reroom(){ clearTimeout(reroomT); reroomT=setTimeout(()=>{
+  S.rooms=findRooms(); draw(); if(S.raised) build3D();
+},60); }
+
 function refresh(){
   const n=S.walls.length, ready=!!(S.mpp&&n>=NEED_WALLS);
   $('#tRaise').disabled=!ready;
@@ -1201,7 +1337,7 @@ function drawRooms(){
   ctx.save(); ctx.fillStyle='rgba(35,33,30,.07)';
   for(const r of S.rooms){
     ctx.beginPath();
-    r.forEach((id,i)=>{ const n=node(id); if(!n)return; const p=toScreen(n); i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y); });
+    r.forEach((n,i)=>{ const p=toScreen(n); i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y); });
     ctx.closePath(); ctx.fill();
   }
   ctx.restore();
@@ -1478,7 +1614,7 @@ function build3D(){
   if(S.rooms.length){
     for(const r of S.rooms){
       const shape=new THREE.Shape();
-      r.forEach((id,i)=>{const n=node(id); if(!n)return; i?shape.lineTo(X(n),Z(n)):shape.moveTo(X(n),Z(n));});
+      r.forEach((n,i)=>{ i?shape.lineTo(X(n),Z(n)):shape.moveTo(X(n),Z(n)); });
       const g=new THREE.ShapeGeometry(shape); g.rotateX(Math.PI/2);
       const f=new THREE.Mesh(g,matF); f.position.y=.002; f.receiveShadow=true; shell.add(f);
     }
@@ -1528,7 +1664,7 @@ function build3D(){
   eye=null;
   let bestA=0;
   for(const r of S.rooms){
-    const p=r.map(id=>node(id)).filter(Boolean).map(n=>({x:X(n),z:Z(n)}));
+    const p=r.map(n=>({x:X(n),z:Z(n)}));
     if(p.length<3) continue;
     let A=0,sx=0,sz=0;
     for(let i=0;i<p.length;i++){

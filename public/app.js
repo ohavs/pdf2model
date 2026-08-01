@@ -1464,8 +1464,8 @@ function init3D(){
   camera=new THREE.PerspectiveCamera(48,1,0.05,600);
   hemi=new THREE.HemisphereLight(0xffffff,0x9a927f,.7); scene.add(hemi);
   sun=new THREE.DirectionalLight(0xffffff,1.6);
-  sun.position.set(9,14,7); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
-  const d=22,c=sun.shadow.camera; c.left=-d;c.right=d;c.top=d;c.bottom=-d;c.near=.5;c.far=70;
+  sun.position.set(15,13,9); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+  const d=34,c=sun.shadow.camera; c.left=-d;c.right=d;c.top=d;c.bottom=-d;c.near=.5;c.far=120;
   sun.shadow.bias=-0.0006; sun.shadow.normalBias=.02; scene.add(sun);
   buildEnv(); bindOrbit(); resize3D();
   (function loop(){ requestAnimationFrame(loop); tick(); })();
@@ -1569,10 +1569,13 @@ function noiseCanvas(w,h,f){
     img.data[i]=v[0];img.data[i+1]=v[1];img.data[i+2]=v[2];img.data[i+3]=255; }
   g.putImageData(img,0,0); return c;
 }
-function tex(c,rep){
+function tex(c,rep,linear){
   const t=new THREE.CanvasTexture(c);
   t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rep,rep);
   t.anisotropy=renderer?renderer.capabilities.getMaxAnisotropy():1;
+  /* a colour map is sRGB. Left at the default LinearEncoding every texture came
+     out pale and desaturated once the renderer converted the frame back. */
+  if(!linear) t.encoding=THREE.sRGBEncoding;
   return t;
 }
 const MAT={};
@@ -1589,12 +1592,250 @@ function buildMaterials(){
   const B=256;
   const wallC=noiseCanvas(B,B,()=>{const v=232+(Math.random()-.5)*7;return [v,v-1,v-4];});
   const wallR=noiseCanvas(B,B,()=>{const v=214+(Math.random()-.5)*20;return [v,v,v];});
-  MAT.floor=new THREE.MeshStandardMaterial({map:tex(floorC,3),roughnessMap:tex(floorR,3),roughness:.62,metalness:0,envMapIntensity:.8});
-  MAT.wall=new THREE.MeshStandardMaterial({map:tex(wallC,5),roughnessMap:tex(wallR,5),roughness:.93,metalness:0,envMapIntensity:.55});
+  MAT.floor=new THREE.MeshStandardMaterial({map:tex(floorC,3),roughnessMap:tex(floorR,3,true),roughness:.62,metalness:0,envMapIntensity:.8});
+  MAT.wall=new THREE.MeshStandardMaterial({map:tex(wallC,5),roughnessMap:tex(wallR,5,true),roughness:.93,metalness:0,envMapIntensity:.55});
   MAT.glass=new THREE.MeshStandardMaterial({color:0xD7E3E8,roughness:.06,metalness:0,transparent:true,opacity:.24,envMapIntensity:2.2});
   MAT.boardW=new THREE.MeshStandardMaterial({color:0xCFC8BA,roughness:.94,metalness:0});
   MAT.boardF=new THREE.MeshStandardMaterial({color:0xB4AB99,roughness:.96,metalness:0});
   MAT.built=true;
+}
+
+/* ══ what each room is ══════════════════════════════════════════════
+   The architect already labelled every room. We read those labels and match
+   each to the polygon it sits inside, which is what decides the floor, the
+   paint and the furniture. Nothing is inferred from shape or size — if the
+   drawing does not name a room, it stays unfurnished rather than guessed at. */
+const ROOM_KINDS=[
+  ['bath',   /רחצה|אמבט|שירות|מקלח|אסלה|שרותים|bath|toilet|wc|shower|ensuite/i],
+  ['kitchen',/מטבח|kitchen|kitchenette/i],
+  ['bed',    /שינה|ילדים|הורים|bed\s*room|bedroom|master/i],
+  ['living', /סלון|מגורים|משפחה|אורחים|living|family|lounge|salon/i],
+  ['dining', /אוכל|פינת אוכל|dining/i],
+  ['office', /עבודה|משרד|מחשב|ספריה|office|study|work/i],
+  ['balcony',/מרפסת|גזוזטרה|balcony|terrace|patio|deck/i],
+  ['store',  /מחסן|ארון|כביסה|מזווה|storage|closet|laundry|pantry|utility/i],
+  ['stair',  /מדרגות|גרם|stair/i],
+  ['hall',   /מסדרון|פרוזדור|כניסה|הול|לובי|hall|corridor|entry|foyer|lobby/i],
+];
+const OUTDOOR=/לא מקורה|פתוח|open|uncovered/i;
+
+function inPoly(p,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const a=poly[i], b=poly[j];
+    if((a.y>p.y)!==(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) inside=!inside;
+  }
+  return inside;
+}
+
+function roomInfo(){
+  const out=[];
+  for(const poly of S.rooms){
+    let A=0,cx=0,cy=0;
+    for(let i=0;i<poly.length;i++){
+      const a=poly[i], b=poly[(i+1)%poly.length], cr=a.x*b.y-b.x*a.y;
+      A+=cr; cx+=(a.x+b.x)*cr; cy+=(a.y+b.y)*cr;
+    }
+    A/=2; if(Math.abs(A)<1) continue;
+    const c={x:cx/(6*A),y:cy/(6*A)};
+    const xs=poly.map(p=>p.x), ys=poly.map(p=>p.y);
+    const bb={x0:Math.min(...xs),x1:Math.max(...xs),y0:Math.min(...ys),y1:Math.max(...ys)};
+    let kind=null, label='', outdoor=false;
+    if(VEC.text){
+      for(const t of VEC.text){
+        if(!inPoly({x:t.cx,y:t.cy},poly)) continue;
+        if(/^[\d.,+\-]+$/.test(t.s)) continue;          // a dimension is not a name
+        for(const [k,re] of ROOM_KINDS) if(re.test(t.s)){ kind=kind||k; label=label||t.s; }
+        if(OUTDOOR.test(t.s)) outdoor=true;
+      }
+    }
+    out.push({poly,area:Math.abs(A)*S.mpp*S.mpp,c,bb,kind,label,outdoor,
+      w:(bb.x1-bb.x0)*S.mpp,d:(bb.y1-bb.y0)*S.mpp});
+  }
+  return out;
+}
+
+/* ══ materials ══════════════════════════════════════════════════════ */
+function planksTex(base,plank,grain){
+  return noiseCanvas(512,512,(x,y)=>{
+    const row=Math.floor(y/plank), gx=(x+row*97)%512;
+    const g=Math.sin(gx*.31+row*2.7)*.5+Math.sin(gx*1.9+row)*.24+(Math.random()-.5)*grain;
+    const seam=(y%plank<1.6||gx%118<1.1)?-.3:0;
+    const b=.72+g*.11+seam;
+    return [clamp(base[0]*b,0,255),clamp(base[1]*b,0,255),clamp(base[2]*b,0,255)];
+  });
+}
+function tilesTex(base,size,grout){
+  return noiseCanvas(512,512,(x,y)=>{
+    const gx=x%size, gy=y%size;
+    const line=(gx<grout||gy<grout);
+    const v=line?.74:(.97+(Math.random()-.5)*.05);
+    return [clamp(base[0]*v,0,255),clamp(base[1]*v,0,255),clamp(base[2]*v,0,255)];
+  });
+}
+function grassTex(){
+  return noiseCanvas(256,256,()=>{
+    const v=.72+Math.random()*.4;
+    return [clamp(104*v,0,255),clamp(132*v,0,255),clamp(66*v,0,255)];
+  });
+}
+function flatTex(rgb,jitter){
+  return noiseCanvas(64,64,()=>{
+    const v=1+(Math.random()-.5)*jitter;
+    return [clamp(rgb[0]*v,0,255),clamp(rgb[1]*v,0,255),clamp(rgb[2]*v,0,255)];
+  });
+}
+const MSTD=(o)=>new THREE.MeshStandardMaterial(o);
+function floorMaterial(kind,outdoor){
+  if(!MAT.floors) MAT.floors={};
+  const key=(kind||'none')+(outdoor?'-out':'');
+  if(MAT.floors[key]) return MAT.floors[key];
+  let m;
+  if(outdoor||kind==='balcony')      m=MSTD({map:tex(tilesTex([196,190,178],86,4),4),roughness:.86,metalness:0});
+  else if(kind==='bath')             m=MSTD({map:tex(tilesTex([206,214,216],64,5),5),roughness:.34,metalness:0,envMapIntensity:1.2});
+  else if(kind==='kitchen')          m=MSTD({map:tex(tilesTex([170,163,152],96,5),4),roughness:.46,metalness:0,envMapIntensity:.9});
+  else if(kind==='stair'||kind==='store') m=MSTD({map:tex(flatTex([176,170,160],.1),3),roughness:.9,metalness:0});
+  else                               m=MSTD({map:tex(planksTex([186,142,96],58,.18),3.2),roughness:.58,metalness:0,envMapIntensity:.8});
+  MAT.floors[key]=m; return m;
+}
+
+/* ══ furniture ══════════════════════════════════════════════════════
+   Built from boxes, procedurally, because a furniture library is a download and
+   this has to work offline in a browser. It is blocking and scale, not styling:
+   a bed that is 1.6 x 2.0 tells you the room takes a double, which is the
+   question people actually open a plan to answer. */
+function box(w,h,d,mat,x,y,z,ry){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.position.set(x,y+h/2,z); if(ry) m.rotation.y=ry;
+  m.castShadow=true; m.receiveShadow=true;
+  m.userData={h,y0:y+h/2};
+  return m;
+}
+function furnMats(modelMode){
+  if(!MAT.fu||MAT.fuMode!==modelMode){
+    const B=c=>MSTD({color:modelMode?0xCFC8BA:c,roughness:.78,metalness:0});
+    MAT.fu={
+      wood:B(0x8A6844), soft:B(0x9AA3A8), soft2:B(0x7C8790), white:B(0xF2F0EC),
+      dark:B(0x4A4741), metal:modelMode?B(0xCFC8BA):MSTD({color:0xB9BDC2,roughness:.32,metalness:.75}),
+      cloth:B(0xB9AE99), green:B(0x5C7A4A),
+    };
+    MAT.fuMode=modelMode;
+  }
+  return MAT.fu;
+}
+
+function furnishRoom(g,r,H,modelMode){
+  const F=furnMats(modelMode);
+  const w=r.w, d=r.d, big=Math.max(w,d), horiz=w>=d;
+  const put=(mesh)=>g.add(mesh);
+  const R=horiz?0:Math.PI/2;                 // long axis of the room
+  const L=big, S2=Math.min(w,d);
+  if(S2<1.1||r.area<2) return;
+  const px=(u,v)=>horiz?[u,v]:[v,u];         // along, across → x,z
+
+  if(r.kind==='bed'&&S2>2.0){
+    const bw=r.area>13?1.6:1.2, bl=2.0;
+    const [bx,bz]=px(-L/2+bl/2+.15,0);
+    put(box(horiz?bl:bw,.32,horiz?bw:bl,F.cloth,bx,0,bz));
+    put(box(horiz?.12:bw+.2,.75,horiz?bw+.2:.12,F.wood,...(horiz?[-L/2+.1,0,bz]:[bz,0,-L/2+.1])));
+    for(const s of [-1,1]){
+      const [nx,nz]=px(-L/2+bl+.4,s*(bw/2+.35));
+      if(Math.abs(s*(bw/2+.35))<S2/2-.3) put(box(.42,.45,.42,F.wood,nx,0,nz));
+    }
+    if(L>3.4){ const [wx,wz]=px(L/2-.35,0); put(box(horiz?.6:Math.min(2.2,S2-.6),2.1,horiz?Math.min(2.2,S2-.6):.6,F.wood,wx,0,wz)); }
+  }
+  else if(r.kind==='living'||r.kind==='dining'){
+    const sl=Math.min(2.4,S2-.8);
+    const [sx,sz]=px(-L/2+.55,0);
+    put(box(horiz?.9:sl,.42,horiz?sl:.9,F.soft,sx,0,sz));
+    put(box(horiz?.24:sl,.78,horiz?sl:.24,F.soft2,...(horiz?[-L/2+.25,0,sz]:[sz,0,-L/2+.25])));
+    const [tx,tz]=px(-L/2+1.7,0);
+    put(box(horiz?.6:1.1,.38,horiz?1.1:.6,F.wood,tx,0,tz));
+    const [rx,rz]=px(-L/2+1.5,0);
+    const rug=new THREE.Mesh(new THREE.BoxGeometry(horiz?2.2:Math.min(2.8,S2-.4),.012,horiz?Math.min(2.8,S2-.4):2.2),F.cloth);
+    rug.position.set(rx,.008,rz); rug.receiveShadow=true; rug.userData={h:.012,y0:.008}; put(rug);
+    if(L>4.2){ const [vx,vz]=px(L/2-.35,0); put(box(horiz?.42:1.8,.5,horiz?1.8:.42,F.dark,vx,0,vz));
+      put(box(horiz?.08:1.25,.72,horiz?1.25:.08,F.dark,...(horiz?[L/2-.3,.62,vz]:[vz,.62,L/2-.3]))); }
+    if(r.area>18){
+      const [dx2,dz]=px(L/2-1.6,0);
+      put(box(horiz?1.5:.95,.74,horiz?.95:1.5,F.wood,dx2,0,dz));
+      for(let i=-1;i<=1;i+=2)for(let k=-1;k<=1;k+=2){
+        const [cx2,cz]=px(L/2-1.6+i*.55,k*.72);
+        if(Math.abs(k*.72)<S2/2-.35) put(box(.42,.46,.42,F.wood,cx2,0,cz));
+      }
+    }
+  }
+  else if(r.kind==='kitchen'){
+    const run=Math.min(L-.4,3.6);
+    const [kx,kz]=px(-L/2+run/2+.2,-(S2/2-.32));
+    put(box(horiz?run:.62,.9,horiz?.62:run,F.white,kx,0,kz));
+    put(box(horiz?run:.66,.06,horiz?.66:run,F.dark,kx,.9,kz));
+    const [ux,uz]=px(-L/2+run/2+.2,-(S2/2-.2));
+    put(box(horiz?run*.8:.36,.7,horiz?.36:run*.8,F.white,ux,1.5,uz));
+    if(S2>3.2){ const [ix,iz]=px(0,.4); put(box(horiz?1.6:.8,.9,horiz?.8:1.6,F.white,ix,0,iz));
+      put(box(horiz?1.7:.9,.06,horiz?.9:1.7,F.dark,ix,.9,iz)); }
+  }
+  else if(r.kind==='bath'){
+    if(big>2.0){ const [bx,bz]=px(-L/2+.9,-(S2/2-.4));
+      put(box(horiz?1.7:.75,.52,horiz?.75:1.7,F.white,bx,0,bz)); }
+    const [sx,sz]=px(L/2-.35,-(S2/2-.28));
+    put(box(horiz?.6:.5,.85,horiz?.5:.6,F.white,sx,0,sz));
+    const [wx,wz]=px(L/2-.35,S2/2-.3);
+    put(box(.4,.42,.6,F.white,wx,0,wz));
+  }
+  else if(r.kind==='office'){
+    const [dx2,dz]=px(-L/2+.9,-(S2/2-.35));
+    put(box(horiz?1.5:.7,.74,horiz?.7:1.5,F.wood,dx2,0,dz));
+    const [cx2,cz]=px(-L/2+.9,-(S2/2-1.1));
+    put(box(.5,.5,.5,F.dark,cx2,0,cz));
+  }
+  else if(r.kind==='store'){
+    put(box(Math.min(w-.3,1.2),2.0,Math.min(d-.3,.6),F.wood,0,0,0));
+  }
+  else if(r.kind==='balcony'||r.outdoor){
+    if(r.area>4){ put(box(.9,.72,.9,F.wood,0,0,0));
+      put(box(.42,.44,.42,F.wood,.85,0,.3)); }
+  }
+}
+
+/* ══ the site ═══════════════════════════════════════════════════════ */
+function buildSite(group,spanX,spanZ,modelMode){
+  if(modelMode) return;                       // the study model sits on nothing
+  const F=furnMats(false);
+  const R=Math.max(spanX,spanZ);
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(R*8,R*8),
+    MSTD({map:tex(grassTex(),Math.max(12,R*1.6)),roughness:.97,metalness:0}));
+  ground.rotation.x=-Math.PI/2; ground.position.y=-.06; ground.receiveShadow=true;
+  group.add(ground);
+
+  /* a paved apron so the building is not planted straight into the lawn */
+  const apron=new THREE.Mesh(new THREE.PlaneGeometry(spanX+2.6,spanZ+2.6),
+    MSTD({map:tex(tilesTex([190,185,175],110,5),Math.max(4,R/3)),roughness:.9,metalness:0}));
+  apron.rotation.x=-Math.PI/2; apron.position.y=-.03; apron.receiveShadow=true;
+  group.add(apron);
+
+  const trunk=new THREE.CylinderGeometry(.12,.17,1.5,7);
+  const crown=new THREE.SphereGeometry(1,9,7);
+  const bark=MSTD({color:0x6B5340,roughness:.95,metalness:0});
+  let seed=1337;
+  const rnd=()=>{ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; };
+  for(let i=0;i<14;i++){
+    const ang=rnd()*Math.PI*2, rad=Math.max(spanX,spanZ)*(.75+rnd()*.9);
+    const x=Math.cos(ang)*rad, z=Math.sin(ang)*rad;
+    if(Math.abs(x)<spanX/2+2.2&&Math.abs(z)<spanZ/2+2.2) continue;
+    const sc=.8+rnd()*.9;
+    const t=new THREE.Mesh(trunk,bark);
+    t.position.set(x,.75*sc,z); t.scale.setScalar(sc); t.castShadow=true; group.add(t);
+    const c=new THREE.Mesh(crown,MSTD({color:new THREE.Color().setHSL(.26+rnd()*.06,.34,.26+rnd()*.1),roughness:.93,metalness:0}));
+    c.position.set(x,(1.5+.9*sc)*sc,z); c.scale.set(1.25*sc,1.5*sc,1.25*sc); c.castShadow=true; group.add(c);
+  }
+  for(let i=0;i<18;i++){
+    const ang=rnd()*Math.PI*2, rad=Math.max(spanX,spanZ)*(.6+rnd()*.4);
+    const x=Math.cos(ang)*rad, z=Math.sin(ang)*rad;
+    if(Math.abs(x)<spanX/2+1.6&&Math.abs(z)<spanZ/2+1.6) continue;
+    const b=new THREE.Mesh(crown,F.green);
+    b.position.set(x,.28,z); b.scale.set(.5+rnd()*.4,.4,.5+rnd()*.4); b.castShadow=true; group.add(b);
+  }
 }
 
 function build3D(){
@@ -1611,12 +1852,33 @@ function build3D(){
   const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
   const X=p=>(p.x-cx)*m, Z=p=>(p.y-cy)*m;
 
-  if(S.rooms.length){
-    for(const r of S.rooms){
+  const info=S.rooms.length?roomInfo():[];
+  /* A base slab under the whole footprint, always. Where a room was not
+     detected there would otherwise be a hole straight through to the paving
+     outside, which reads as a bug rather than as a gap in the detection. */
+  {
+    const base=new THREE.Mesh(
+      new THREE.BoxGeometry((maxX-minX)*m+T,.04,(maxY-minY)*m+T),
+      modelMode?matF:floorMaterial(null,false));
+    base.position.y=-.02; base.receiveShadow=true; shell.add(base);
+  }
+  if(info.length){
+    for(const r of info){
       const shape=new THREE.Shape();
-      r.forEach((n,i)=>{ i?shape.lineTo(X(n),Z(n)):shape.moveTo(X(n),Z(n)); });
-      const g=new THREE.ShapeGeometry(shape); g.rotateX(Math.PI/2);
-      const f=new THREE.Mesh(g,matF); f.position.y=.002; f.receiveShadow=true; shell.add(f);
+      /* build in (x,-z) and rotate -90 so the slab's normal ends up pointing UP.
+         rotateX(+90) sent it down: every floor in the model was being viewed
+         from behind and culled, which is why the paving showed through. */
+      r.poly.forEach((n,i)=>{ i?shape.lineTo(X(n),-Z(n)):shape.moveTo(X(n),-Z(n)); });
+      const g=new THREE.ShapeGeometry(shape); g.rotateX(-Math.PI/2);
+      const mat=modelMode?matF:floorMaterial(r.kind,r.outdoor);
+      const f=new THREE.Mesh(g,mat); f.position.y=.006; f.receiveShadow=true; shell.add(f);
+      /* furniture sits in the room's own frame, so it can be placed against walls */
+      if(!r.outdoor||r.kind==='balcony'){
+        const rg=new THREE.Group();
+        rg.position.set((r.c.x-cx)*m,0,(r.c.y-cy)*m);
+        furnishRoom(rg,r,H,modelMode);
+        if(rg.children.length) shell.add(rg);
+      }
     }
   }else{
     const f=new THREE.Mesh(new THREE.BoxGeometry((maxX-minX)*m+T,.04,(maxY-minY)*m+T),matF);
@@ -1680,6 +1942,8 @@ function build3D(){
   }
   if(!eye) eye=spotIn(0,0,(maxX-minX)*m,(maxY-minY)*m);
 
+  buildSite(shell,(maxX-minX)*m,(maxY-minY)*m,modelMode);
+
   if(!S.raised){
     frameModel((maxX-minX)*m,(maxY-minY)*m,H);
     orbit.ty=H*.55; orbit.tx=0; orbit.tz=0;
@@ -1727,9 +1991,14 @@ function frameModel(w,d,h){
 function applyEnv(){
   const r=S.mode==='render';
   scene.environment=r?envRT.texture:null;
-  scene.background=new THREE.Color(r?0xBFC6CC:0xCFCABF);
-  hemi.intensity=r?.28:.78; sun.intensity=r?2.3:1.15;
-  renderer.toneMappingExposure=r?1.05:1;
+  scene.background=new THREE.Color(r?0xAFC4D8:0xCFCABF);
+  scene.fog=r?new THREE.Fog(0xAFC4D8,60,320):null;
+  hemi.intensity=r?.42:.78;
+  hemi.color.setHex(r?0xBBD3EC:0xffffff);
+  hemi.groundColor.setHex(r?0x6E7355:0x9a927f);
+  sun.color.setHex(r?0xFFF2DC:0xffffff);
+  sun.intensity=r?1.85:1.15;
+  renderer.toneMappingExposure=r?.92:1;
 }
 function raise(){
   if(!live('#tRaise')) return;

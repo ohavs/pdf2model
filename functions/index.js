@@ -123,10 +123,11 @@ exports.renderView = onCall(
 
     const key = GEMINI_API_KEY.value();
     /* With no key configured the whole path still runs and says so, rather than
-       failing in a way that looks like a bug in the app. */
-    if (!key) {
+       failing in a way that looks like a bug in the app. A real key is ~39
+       characters; the placeholder the function ships with is not. */
+    if (!key || key === "UNSET" || key.length < 20) {
       return { ok: false, reason: "no-key",
-        message: "מפתח הרנדור לא הוגדר בשרת. הכל מוכן חוץ מזה." };
+        message: "מפתח הרנדור עדיין לא הוגדר בשרת. כל השאר מוכן." };
     }
 
     const quota = await takeQuota(uid);

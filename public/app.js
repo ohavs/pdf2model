@@ -280,7 +280,7 @@ async function openBytes(bytes,name,page){
     await renderPage(clamp(page,1,S.numPages));
     $('#empty').style.display='none';
     $('#chipScale').hidden=false;
-    ['#tCal','#tOpt','#tSnap'].forEach(s=>$(s).disabled=false);
+    ['#tCal','#tOpt','#tSnap','#tOps'].forEach(s=>$(s).disabled=false);
     $('#tAuto').disabled=!S.mpp;
     setTool(S.mpp?'wall':'calibrate');
     refresh();
@@ -1206,7 +1206,7 @@ $('#tClear').onclick=()=>{
 /* enabled and actually on screen — below 820px the model instruments are removed
    with the model pane, and their shortcuts must go with them */
 function live(sel){ const el=$(sel); return !!el&&!el.disabled&&el.offsetParent!==null; }
-function closePops(){ ['#opt','#exp','#snapPop'].forEach(x=>$(x).classList.remove('on')); }
+function closePops(){ ['#opt','#exp','#snapPop','#opsPop'].forEach(x=>$(x).classList.remove('on')); }
 function togglePop(sel,btn){
   const p=$(sel), was=p.classList.contains('on');
   closePops();
@@ -1222,6 +1222,33 @@ function togglePop(sel,btn){
 $('#tOpt').onclick=e=>togglePop('#opt',e.currentTarget);
 $('#tExp').onclick=e=>togglePop('#exp',e.currentTarget);
 $('#tSnap').onclick=e=>togglePop('#snapPop',e.currentTarget);
+$('#tOps').onclick=e=>{ togglePop('#opsPop',e.currentTarget); syncOpsUI(); };
+
+const opNum=(id,d)=>{ const v=parseFloat($(id).value); return isFinite(v)?v:d; };
+$('#opDup').onclick=()=>Ops.duplicate();
+$('#opOff').onclick=()=>Ops.offset(opNum('#opOffD',0.2));
+$('#opSerX').onclick=()=>Ops.series(opNum('#opSerN',3),opNum('#opSerG',3),'x');
+$('#opSerY').onclick=()=>Ops.series(opNum('#opSerN',3),opNum('#opSerG',3),'y');
+$('#opSplit').onclick=()=>Ops.split();
+$('#opWeld').onclick=()=>Ops.weld(0.25);
+$('#opStraight').onclick=()=>Ops.straighten();
+$('#opMirX').onclick=()=>Ops.mirror('x');
+$('#opMirY').onclick=()=>Ops.mirror('y');
+$('#opAlX').onclick=()=>Ops.align('x');
+$('#opAlY').onclick=()=>Ops.align('y');
+$('#opDiX').onclick=()=>Ops.distribute('x');
+$('#opDiY').onclick=()=>Ops.distribute('y');
+/* an operation that cannot apply says so by being unavailable, not by
+   complaining after the click */
+function syncOpsUI(){
+  const n=Sel.walls().length;
+  const set=(sel,ok)=>{ const b=$(sel); if(b) b.disabled=!ok; };
+  ['#opDup','#opOff','#opSerX','#opSerY','#opSplit','#opStraight','#opMirX','#opMirY']
+    .forEach(x=>set(x,n>0));
+  set('#opWeld',true);                      // with nothing selected it welds the whole plan
+  ['#opAlX','#opAlY'].forEach(x=>set(x,n>1));
+  ['#opDiX','#opDiY'].forEach(x=>set(x,n>2));
+}
 
 /* the magnets, reflected both ways: the boxes show what the engine will do,
    and changing one takes effect on the next move — no apply button */
@@ -1643,7 +1670,7 @@ function renderProps(){
       const e=freeEnd(one);
       hint=e.joint?'שני הקצוות מחוברים לקירות אחרים — שינוי אורך יזיז את הקצה השני ויגרור אותם.'
                   :'שינוי אורך או זווית מזיז את הקצה החופשי.';
-    }else hint='עובי משותף לכל הקירות שנבחרו.';
+    }else hint=measureOf(walls);
   }else if(opens.length&&!walls.length){
     $('#propsTitle').textContent=opens.length>1?'פתחים':'פתח';
     const one=opens.length===1?opens[0]:null;
@@ -1660,7 +1687,7 @@ function renderProps(){
     $('#propsTitle').textContent='בחירה';
     html+=field('pThk','עובי קירות','מ׳',common(walls,w=>w.t||S.dims.wall),'0.01','0.03','1',!walls.length);
     html+=field('pW','רוחב פתחים','מ׳',common(opens,o=>o.width),'0.05','0.3','6',!opens.length);
-    hint=Sel.describe();
+    hint=Sel.describe()+(walls.length?' · '+measureOf(walls):'');
   }
   propsFields.innerHTML=html;
   $('#propsHint').textContent=hint;
@@ -1669,6 +1696,23 @@ function renderProps(){
 
 /* a field commits on Enter, Tab or blur — never on every keystroke, because
    "3" on the way to "3.6" is a wall you did not ask for */
+/* Measuring without drawing anything: what a selection adds up to. Two walls
+   also report the angle between them, which is the number you actually want
+   when checking whether a corner is square. */
+function measureOf(walls){
+  const tot=walls.reduce((s,w)=>s+(wallLength(w)||0),0);
+  let t='סה״כ '+fmt(tot);
+  if(walls.length===2){
+    const dir=w=>{const a=node(w.a),b=node(w.b);return a&&b?Math.atan2(b.y-a.y,b.x-a.x):null;};
+    const d0=dir(walls[0]), d1=dir(walls[1]);
+    if(d0!==null&&d1!==null){
+      let d=Math.abs((d1-d0)*180/Math.PI)%180;
+      if(d>90) d=180-d;
+      t+=' · ביניהם '+d.toFixed(1)+'°';
+    }
+  }
+  return t;
+}
 function wireProps(){
   $$('#propsFields input').forEach(inp=>{
     inp.addEventListener('focus',()=>{ propsBusy=true; });
@@ -1818,6 +1862,219 @@ function applyTyped(){
 }
 function cancelTyped(){ typed=null; typeInEl.classList.remove('on'); }
 
+
+/* ══ operations ═════════════════════════════════════════════════════
+   The verbs a drawing needs that a pointer cannot express: repeat this,
+   split it there, weld those two corners that nearly meet, straighten a run
+   the detector left at 89.4°. Each is one named undo step and each says what
+   it did, because an operation on a selection you cannot see the far edge of
+   has to account for itself. */
+const Ops = {
+  sheetOK(list){ return list.every(onSheet); },
+  nodesOfWalls(walls){ return [...new Set(walls.flatMap(w=>[w.a,w.b]))]; },
+
+  /* one place that copies walls, their corners and their openings */
+  cloneWalls(walls,dx,dy){
+    const map=new Map(), made=[];
+    const cp=id=>{
+      if(map.has(id)) return map.get(id);
+      const n=node(id); if(!n) return null;
+      const m={id:uid++,x:n.x+dx,y:n.y+dy}; S.nodes.push(m); map.set(id,m.id); return m.id;
+    };
+    for(const w of walls){
+      const a=cp(w.a), b=cp(w.b); if(a==null||b==null||a===b) continue;
+      const nw={id:uid++,a,b}; if(w.t>0) nw.t=w.t;
+      S.walls.push(nw); made.push(nw.id);
+      for(const o of S.openings.filter(o=>o.wallId===w.id))
+        S.openings.push({...o,id:uid++,wallId:nw.id});
+    }
+    return made;
+  },
+  wouldLeaveSheet(walls,dx,dy){
+    return this.nodesOfWalls(walls).map(node).filter(Boolean)
+      .some(n=>!onSheet({x:n.x+dx,y:n.y+dy}));
+  },
+
+  duplicate(){
+    const walls=Sel.walls(); if(!walls.length) return this.nothing();
+    const d=(S.mpp?0.3/S.mpp:24);
+    if(this.wouldLeaveSheet(walls,d,d)) return this.offSheet();
+    pushHistory('שכפול');
+    const made=this.cloneWalls(walls,d,d);
+    Sel.clear(); made.forEach(id=>Sel.add('wall',id));
+    this.done(made.length+(made.length>1?' קירות שוכפלו':' קיר שוכפל'));
+  },
+
+  /* split where the pointer is when that is unambiguous, at mid-span otherwise */
+  split(){
+    const walls=Sel.walls(); if(!walls.length) return this.nothing();
+    pushHistory('פיצול קיר');
+    const made=[];
+    for(const w of walls){
+      const a=node(w.a), b=node(w.b); if(!a||!b) continue;
+      let t=0.5;
+      if(walls.length===1&&S.cursor){
+        const vx=b.x-a.x, vy=b.y-a.y, L2=vx*vx+vy*vy;
+        if(L2){ const q=((S.cursor.x-a.x)*vx+(S.cursor.y-a.y)*vy)/L2;
+          if(q>0.03&&q<0.97) t=q; }
+      }
+      const m={id:uid++,x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t}; S.nodes.push(m);
+      const w2={id:uid++,a:m.id,b:w.b}; if(w.t>0) w2.t=w.t;
+      /* the openings go with the half that holds them, re-parameterised */
+      for(const o of S.openings.filter(o=>o.wallId===w.id)){
+        if(o.u>t){ o.wallId=w2.id; o.u=clamp((o.u-t)/(1-t),.04,.96); }
+        else o.u=clamp(o.u/t,.04,.96);
+      }
+      w.b=m.id; S.walls.push(w2); made.push(w.id,w2.id);
+    }
+    Sel.clear(); made.forEach(id=>Sel.add('wall',id));
+    this.done(made.length?'הקיר פוצל':null);
+  },
+
+  /* corners that nearly meet, made into one. The detector leaves plenty. */
+  weld(tolM){
+    const walls=Sel.walls().length?Sel.walls():S.walls;
+    if(!walls.length) return this.nothing();
+    const ids=this.nodesOfWalls(walls);
+    const tol=(tolM||0.25)/(S.mpp||1);
+    const groups=[];
+    for(const id of ids){
+      const n=node(id); if(!n) continue;
+      const g=groups.find(G=>dist(node(G[0]),n)<tol);
+      if(g) g.push(id); else groups.push([id]);
+    }
+    const merges=groups.filter(g=>g.length>1);
+    if(!merges.length){ say('אין פינות קרובות מספיק לריתוך.'); return; }
+    pushHistory('ריתוך פינות');
+    let n=0;
+    for(const g of merges){
+      const pts=g.map(node).filter(Boolean); if(pts.length<2) continue;
+      const cx=pts.reduce((a,p)=>a+p.x,0)/pts.length, cy=pts.reduce((a,p)=>a+p.y,0)/pts.length;
+      const keep=g[0], k=node(keep); k.x=cx; k.y=cy;
+      for(const id of g.slice(1)){
+        for(const w of S.walls){ if(w.a===id) w.a=keep; if(w.b===id) w.b=keep; }
+        S.nodes=S.nodes.filter(q=>q.id!==id);
+        n++;
+      }
+    }
+    /* a wall whose two ends welded together is no longer a wall */
+    const gone=S.walls.filter(w=>w.a===w.b).map(w=>w.id);
+    if(gone.length){ S.walls=S.walls.filter(w=>w.a!==w.b);
+      S.openings=S.openings.filter(o=>!gone.includes(o.wallId)); }
+    this.done(n+(n>1?' פינות רותכו':' פינה רותכה'));
+  },
+
+  /* a run the detector left at 89.4° becomes 90°, pivoting about its middle */
+  straighten(){
+    const walls=Sel.walls(); if(!walls.length) return this.nothing();
+    pushHistory('יישור לצירים');
+    let n=0;
+    for(const w of walls){
+      const a=node(w.a), b=node(w.b); if(!a||!b) continue;
+      const dx=b.x-a.x, dy=b.y-a.y, H=Math.hypot(dx,dy)/2;
+      const cx=(a.x+b.x)/2, cy=(a.y+b.y)/2;
+      let A,B;
+      if(Math.abs(dx)>=Math.abs(dy)){ const s=dx<0?-1:1; A={x:cx-s*H,y:cy}; B={x:cx+s*H,y:cy}; }
+      else { const s=dy<0?-1:1; A={x:cx,y:cy-s*H}; B={x:cx,y:cy+s*H}; }
+      if(!onSheet(A)||!onSheet(B)) continue;
+      a.x=A.x;a.y=A.y;b.x=B.x;b.y=B.y; n++;
+    }
+    this.done(n?(n+(n>1?' קירות יושרו':' קיר יושר')):null);
+  },
+
+  mirror(axis){
+    const walls=Sel.walls(); if(!walls.length) return this.nothing();
+    const pts=this.nodesOfWalls(walls).map(node).filter(Boolean); if(!pts.length) return;
+    const c = axis==='x'
+      ? (Math.min(...pts.map(p=>p.x))+Math.max(...pts.map(p=>p.x)))/2
+      : (Math.min(...pts.map(p=>p.y))+Math.max(...pts.map(p=>p.y)))/2;
+    const to=pts.map(p=>axis==='x'?{x:2*c-p.x,y:p.y}:{x:p.x,y:2*c-p.y});
+    if(!this.sheetOK(to)) return this.offSheet();
+    pushHistory('שיקוף');
+    /* an opening sits at a fraction along its wall, and a fraction survives a
+       mirror unchanged — both ends move, so nothing here needs flipping */
+    pts.forEach((p,i)=>{ p.x=to[i].x; p.y=to[i].y; });
+    this.done(axis==='x'?'שוקף לרוחב':'שוקף לאורך');
+  },
+
+  series(n,gapM,axis){
+    const walls=Sel.walls(); if(!walls.length) return this.nothing();
+    n=clamp(Math.round(n||1),1,40);
+    const step=(gapM||1)/(S.mpp||1);
+    const dx=axis==='x'?step:0, dy=axis==='y'?step:0;
+    if(this.wouldLeaveSheet(walls,dx*n,dy*n)) return this.offSheet();
+    pushHistory('סדרה');
+    const made=[];
+    for(let k=1;k<=n;k++) made.push(...this.cloneWalls(walls,dx*k,dy*k));
+    Sel.clear(); made.forEach(id=>Sel.add('wall',id));
+    this.done(made.length+' קירות נוספו בסדרה');
+  },
+
+  offset(dM){
+    const walls=Sel.walls(); if(!walls.length) return this.nothing();
+    const d=(dM||0.2)/(S.mpp||1);
+    pushHistory('העתק מקביל');
+    const made=[];
+    for(const w of walls){
+      const a=node(w.a), b=node(w.b); if(!a||!b) continue;
+      const u=unit(a,b); let nx=-u.y, ny=u.x;
+      /* the copy lands on the side the pointer is on, which is the only
+         reading of "offset" a hand can express */
+      if(S.cursor&&((S.cursor.x-a.x)*nx+(S.cursor.y-a.y)*ny)<0){ nx=-nx; ny=-ny; }
+      const A={x:a.x+nx*d,y:a.y+ny*d}, B={x:b.x+nx*d,y:b.y+ny*d};
+      if(!onSheet(A)||!onSheet(B)) continue;
+      const na={id:uid++,...A}, nb={id:uid++,...B};
+      S.nodes.push(na,nb);
+      const nw={id:uid++,a:na.id,b:nb.id}; if(w.t>0) nw.t=w.t;
+      S.walls.push(nw); made.push(nw.id);
+    }
+    if(!made.length){ Hist.undo.pop(); sync(); return this.offSheet(); }
+    Sel.clear(); made.forEach(id=>Sel.add('wall',id));
+    this.done(made.length+' קירות מקבילים נוספו');
+  },
+
+  /* centres onto one line. A corner shared by two selected walls moves once. */
+  align(axis){
+    const walls=Sel.walls(); if(walls.length<2) return this.needTwo();
+    const rows=walls.map(w=>{const a=node(w.a),b=node(w.b);
+      return a&&b?{a,b,c:axis==='x'?(a.x+b.x)/2:(a.y+b.y)/2}:null;}).filter(Boolean);
+    if(rows.length<2) return this.needTwo();
+    const m=rows.reduce((s,r)=>s+r.c,0)/rows.length;
+    pushHistory('יישור מרכזים');
+    const done=new Set();
+    for(const r of rows){ const d=m-r.c;
+      for(const n of [r.a,r.b]){ if(done.has(n.id)) continue; done.add(n.id);
+        if(axis==='x') n.x=clamp(n.x+d,0,S.srcW); else n.y=clamp(n.y+d,0,S.srcH); } }
+    this.done('מרכזי '+rows.length+' קירות יושרו');
+  },
+
+  distribute(axis){
+    const walls=Sel.walls(); if(walls.length<3){ say('צריך שלושה קירות לפחות לפיזור אחיד.'); return; }
+    const rows=walls.map(w=>{const a=node(w.a),b=node(w.b);
+      return a&&b?{a,b,c:axis==='x'?(a.x+b.x)/2:(a.y+b.y)/2}:null;})
+      .filter(Boolean).sort((p,q)=>p.c-q.c);
+    if(rows.length<3){ say('צריך שלושה קירות לפחות לפיזור אחיד.'); return; }
+    pushHistory('פיזור אחיד');
+    const lo=rows[0].c, hi=rows[rows.length-1].c, step=(hi-lo)/(rows.length-1);
+    const done=new Set();
+    rows.forEach((r,i)=>{ const d=(lo+step*i)-r.c;
+      for(const n of [r.a,r.b]){ if(done.has(n.id)) continue; done.add(n.id);
+        if(axis==='x') n.x=clamp(n.x+d,0,S.srcW); else n.y=clamp(n.y+d,0,S.srcH); } });
+    this.done(rows.length+' קירות פוזרו אחיד');
+  },
+
+  nothing(){ say('בחרו קודם קירות.'); },
+  needTwo(){ say('צריך לפחות שני קירות.'); },
+  offSheet(){ say('הפעולה תוציא קירות אל מחוץ לגיליון.'); },
+  done(msg){
+    S.rooms=findRooms();
+    refresh(); draw(); touch();
+    if(S.raised&&!syncWalls()) build3D();
+    sync(); renderProps();
+    if(msg) say(msg+'. Ctrl+Z מחזיר.');
+  },
+};
+
 /* ══ pointer ════════════════════════════════════════════════════════ */
 let panning=false, panStart=null, dragOpening=null, liveSync=0;
 let drag=null, marquee=null;
@@ -1825,7 +2082,7 @@ let drag=null, marquee=null;
 function sayPick(){
   const d=Sel.describe();
   say(d?('נבחרו '+d+'. Backspace מוחק, החצים מזיזים.'):PROMPT.select);
-  renderProps();
+  renderProps(); syncOpsUI();
 }
 
 /* Dragging a handle. An endpoint takes every wall that shares that corner with
@@ -1839,6 +2096,12 @@ function dragHandle(p){
     if(w) anchor=node(w.a===drag.nodeId?w.b:w.a)||null;
   }
   const s2=toSheet(snapPoint(p,anchor,drag.k==='end'?[drag.nodeId]:null,moving));
+  /* an axis lock is a promise the pointer cannot break: it wins over the
+     magnets, which is the whole reason to hold the key */
+  if(drag.axis&&drag.origin){
+    if(drag.axis==='x') s2.y=drag.origin.y; else s2.x=drag.origin.x;
+    s2.kind=null;
+  }
   drag.moved=true;
   if(drag.k==='end'){
     const n=node(drag.nodeId);
@@ -1928,7 +2191,7 @@ planEl.addEventListener('pointerdown',e=>{
     const h=keys.shift?null:handleAt(p);
     if(h){
       pushHistory(h.k==='openEdge'?'שינוי רוחב פתח':(h.k==='mid'?'הזזת קיר':'הזזת פינה'));
-      drag={...h,start:{...p},moved:false};
+      drag={...h,start:{...p},origin:{x:h.x,y:h.y},axis:null,moved:false};
       cv.setPointerCapture(e.pointerId);
       return;
     }
@@ -2037,6 +2300,13 @@ addEventListener('keydown',e=>{
   if(drag&&/^[0-9.]$/.test(e.key)){
     e.preventDefault(); typed=(typed||'')+e.key; showTyped(); return;
   }
+  if(drag&&(e.key==='x'||e.key==='X'||e.key==='y'||e.key==='Y')&&typed===null){
+    e.preventDefault();
+    const want=e.key.toLowerCase();
+    drag.axis = drag.axis===want ? null : want;
+    if(S.cursor) dragHandle(S.cursor); else saySnap(null);
+    return;
+  }
   if(drag&&typed!==null){
     if(e.key==='Backspace'){ e.preventDefault(); typed=typed.slice(0,-1); showTyped(); return; }
     if(e.key==='Enter'){ e.preventDefault(); applyTyped(); return; }
@@ -2048,6 +2318,12 @@ addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); save(); return; }
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='d'){ e.preventDefault(); Ops.duplicate(); return; }
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='a'){
+    e.preventDefault();
+    if(S.tool!=='select'||!S.walls.length) return;
+    Sel.clear(); S.walls.forEach(w=>Sel.add('wall',w.id)); sayPick(); draw(); return;
+  }
   const k=e.key.toLowerCase();
   if(k==='v') setTool('select');
   if(k==='s') setTool('calibrate');
@@ -2058,6 +2334,9 @@ addEventListener('keydown',e=>{
   if(k==='r'&&live('#tRaise')) raise();
   if(k==='e'&&live('#tExp')) togglePop('#exp',$('#tExp'));
   if(k==='m'&&live('#tSnap')) togglePop('#snapPop',$('#tSnap'));
+  if(k==='o'&&live('#tOps')){ togglePop('#opsPop',$('#tOps')); syncOpsUI(); }
+  if(k==='k'&&S.tool==='select'&&Sel.walls().length) Ops.split();
+  if(k==='j'&&S.tool==='select') Ops.weld(0.25);
   /* a measurement with nothing anchoring it is not a measurement */
   if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};Sel.clear();liveDim.textContent='';clearGuides();hideLen();closePops();
     cancelTyped(); renderProps();
@@ -2397,6 +2676,9 @@ function drawCal(){
 /* The name of what caught, plus the angle when there is one — a magnet that
    does not say what it grabbed is indistinguishable from a bug. */
 function saySnap(anchor){
+  /* an axis lock outranks whatever the magnets would have said, because it is
+     the thing actually deciding where the point goes */
+  if(drag&&drag.axis){ snapState.textContent='נעילה לציר '+drag.axis.toUpperCase(); return; }
   const k=S.snap&&S.snap.kind;
   if(!k){ snapState.textContent=''; return; }
   const names=String(k).split('+').map(x=>SNAP_NAME[x]||(x==='onwall'?'על הקיר':x));
@@ -3329,7 +3611,7 @@ $('#xJson').onclick=()=>{
 
 /* ══ boot ═══════════════════════════════════════════════════════════ */
 document.addEventListener('click',e=>{
-  if(!e.target.closest('#opt,#exp,#snapPop,#tOpt,#tExp,#tSnap')) closePops();
+  if(!e.target.closest('#opt,#exp,#snapPop,#opsPop,#tOpt,#tExp,#tSnap,#tOps')) closePops();
 });
 sizeCanvas(); draw(); refresh(); sync();
 new ResizeObserver(()=>{sizeCanvas();draw();resize3D();}).observe(document.body);

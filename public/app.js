@@ -12,7 +12,7 @@ const S = {
   tool:'select',
   cal:{a:null,b:null},
   nodes:[], walls:[], rooms:[], openings:[],
-  chain:[], cursor:null, snap:null, hoverWall:-1, sel:null,
+  chain:[], cursor:null, snap:null, guides:[], hoverWall:-1, sel:null,
   dims:{wall:.20, ceil:2.70, door:.90, win:1.20, sill:.90},
   raised:false, mode:'model', cam:'orbit',
   proposal:null,
@@ -20,11 +20,30 @@ const S = {
   projectId:null, name:'תוכנית ללא שם', pdfBytes:null, pdfName:'', dirty:false
 };
 let uid = 1;
+/* Which magnets are live. Declared here with the rest of the state because
+   the settings popover is wired long before the engine that reads them. */
+const SNAP = {
+  node:1, corner:1, mid:1, inter:1, perp:1, ext:1, par:1, angle:1, grid:0,
+  angleStep:15, gridCm:10,
+};
+const SNAP_NAME = {
+  node:'פינה שלכם', corner:'פינה בשרטוט', mid:'אמצע קיר', inter:'חיתוך',
+  perp:'ניצב', ext:'המשך קיר', par:'מקביל', angle:'זווית', grid:'רשת',
+};
+try{
+  const saved=JSON.parse(localStorage.getItem('pdf2model.snap')||'null');
+  if(saved&&typeof saved==='object') Object.assign(SNAP,saved);
+}catch(e){}
+function saveSnapPrefs(){
+  try{ localStorage.setItem('pdf2model.snap',JSON.stringify(SNAP)); }catch(e){}
+}
+
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const planEl=$('#plan'), cv=$('#planCv'), ctx=cv.getContext('2d');
-const bodyEl=$('#body'), msg=$('#msg'), liveDim=$('#liveDim'), tally=$('#tally');
+const bodyEl=$('#body'), msg=$('#msg'), liveDim=$('#liveDim'), tally=$('#tally'), snapState=$('#snapState');
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
@@ -261,7 +280,7 @@ async function openBytes(bytes,name,page){
     await renderPage(clamp(page,1,S.numPages));
     $('#empty').style.display='none';
     $('#chipScale').hidden=false;
-    ['#tCal','#tOpt'].forEach(s=>$(s).disabled=false);
+    ['#tCal','#tOpt','#tSnap'].forEach(s=>$(s).disabled=false);
     $('#tAuto').disabled=!S.mpp;
     setTool(S.mpp?'wall':'calibrate');
     refresh();
@@ -1127,14 +1146,19 @@ function sync(){
   if(r){ r.disabled=!Hist.canRedo();
     r.dataset.tip=Hist.canRedo()?('ביצוע מחדש '+Hist.redo[Hist.redo.length-1].label):'ביצוע מחדש'; }
 }
-function pushHistory(label){ Hist.push(label||'שינוי'); }
+/* A run of arrow presses is one move. It stays open until something else
+   happens — another edit, an undo, a change of selection or of tool — which is
+   a rule the user can hold in their head, unlike a timer. */
+let nudgeRun=false;
+function endNudgeRun(){ nudgeRun=false; }
+function pushHistory(label){ if(label!=='הזזה') nudgeRun=false; Hist.push(label||'שינוי'); }
 function afterHistory(label,dir){
   S.rooms=findRooms();
   refresh(); draw(); touch(); if(S.raised) build3D(); sync();
   if(label) say((dir==='undo'?'בוטל: ':'בוצע מחדש: ')+label);
 }
-function undo(){ const l=Hist.stepBack(); if(l!==null) afterHistory(l,'undo'); }
-function redo(){ const l=Hist.stepFwd(); if(l!==null) afterHistory(l,'redo'); }
+function undo(){ endNudgeRun(); const l=Hist.stepBack(); if(l!==null) afterHistory(l,'undo'); }
+function redo(){ endNudgeRun(); const l=Hist.stepFwd(); if(l!==null) afterHistory(l,'redo'); }
 
 /* ══ tools ══════════════════════════════════════════════════════════ */
 const TOOLS={select:'#tSelect',calibrate:'#tCal',wall:'#tWall',door:'#tDoor',window:'#tWin'};
@@ -1147,7 +1171,7 @@ const PROMPT={
 };
 function setTool(t){
   if($(TOOLS[t])?.disabled) return;
-  S.tool=t; S.chain=[]; S.cal={a:null,b:null}; Sel.clear(); hideLen(); closePops(); liveDim.textContent='';
+  S.tool=t; S.chain=[]; S.cal={a:null,b:null}; Sel.clear(); hideLen(); closePops(); liveDim.textContent=''; clearGuides();
   for(const k in TOOLS) $(TOOLS[k]).setAttribute('aria-pressed',String(k===t));
   planEl.classList.toggle('sel',t==='select');
   say(PROMPT[t]); draw();
@@ -1169,14 +1193,42 @@ $('#tClear').onclick=()=>{
 /* enabled and actually on screen — below 820px the model instruments are removed
    with the model pane, and their shortcuts must go with them */
 function live(sel){ const el=$(sel); return !!el&&!el.disabled&&el.offsetParent!==null; }
-function closePops(){ $('#opt').classList.remove('on'); $('#exp').classList.remove('on'); }
+function closePops(){ ['#opt','#exp','#snapPop'].forEach(x=>$(x).classList.remove('on')); }
 function togglePop(sel,btn){
   const p=$(sel), was=p.classList.contains('on');
   closePops();
-  if(!was){ p.classList.add('on'); p.style.top=(btn.getBoundingClientRect().top-44)+'px'; }
+  if(!was){
+    p.classList.add('on');
+    /* anchored to its instrument, but never hanging off the top or bottom of
+       the window — the magnets list is tall enough to reach both */
+    p.style.top='0px';
+    const h=p.offsetHeight, r=btn.getBoundingClientRect();
+    p.style.top=clamp(r.top-44,8,Math.max(8,innerHeight-h-38))+'px';
+  }
 }
 $('#tOpt').onclick=e=>togglePop('#opt',e.currentTarget);
 $('#tExp').onclick=e=>togglePop('#exp',e.currentTarget);
+$('#tSnap').onclick=e=>togglePop('#snapPop',e.currentTarget);
+
+/* the magnets, reflected both ways: the boxes show what the engine will do,
+   and changing one takes effect on the next move — no apply button */
+function syncSnapUI(){
+  $$('#snapPop input[data-snap]').forEach(b=>{ b.checked=!!SNAP[b.dataset.snap]; });
+  $('#sGrid').value=SNAP.gridCm; $('#sAngle').value=SNAP.angleStep;
+}
+$$('#snapPop input[data-snap]').forEach(b=>{
+  b.addEventListener('change',()=>{
+    SNAP[b.dataset.snap]=b.checked?1:0; saveSnapPrefs();
+    const on=$$('#snapPop input[data-snap]').filter(x=>x.checked).length;
+    say(on?('פעילים '+on+' מגנטים.'):'כל המגנטים כבויים. נקודות ייפלו בדיוק במקום הלחיצה.');
+    clearGuides(); draw();
+  });
+});
+$('#sGrid').addEventListener('change',e=>{
+  SNAP.gridCm=clamp(+e.target.value||10,1,100); e.target.value=SNAP.gridCm; saveSnapPrefs(); });
+$('#sAngle').addEventListener('change',e=>{
+  SNAP.angleStep=clamp(+e.target.value||15,1,90); e.target.value=SNAP.angleStep; saveSnapPrefs(); });
+syncSnapUI();
 ['oWall','oCeil','oDoor','oWin','oSill'].forEach(id=>{
   $('#'+id).oninput=e=>{
     const k={oWall:'wall',oCeil:'ceil',oDoor:'door',oWin:'win',oSill:'sill'}[id];
@@ -1211,12 +1263,12 @@ document.querySelectorAll('.tool[data-tip]').forEach(b=>{
 const Sel = {
   items:[],                                  // [{t:'wall'|'opening'|'node', id}]
   has(t,id){ return this.items.some(x=>x.t===t&&x.id===id); },
-  clear(){ this.items.length=0; S.sel=null; },
-  set(t,id){ this.items=[{t,id}]; S.sel={t,id}; },
-  add(t,id){ if(!this.has(t,id)) this.items.push({t,id}); S.sel={t,id}; },
+  clear(){ this.items.length=0; S.sel=null; endNudgeRun(); },
+  set(t,id){ this.items=[{t,id}]; S.sel={t,id}; endNudgeRun(); },
+  add(t,id){ if(!this.has(t,id)) this.items.push({t,id}); S.sel={t,id}; endNudgeRun(); },
   toggle(t,id){
     const i=this.items.findIndex(x=>x.t===t&&x.id===id);
-    if(i>=0){ this.items.splice(i,1); S.sel=this.items[this.items.length-1]||null; }
+    if(i>=0){ this.items.splice(i,1); S.sel=this.items[this.items.length-1]||null; endNudgeRun(); }
     else this.add(t,id);
   },
   walls(){ return this.items.filter(x=>x.t==='wall').map(x=>wallById(x.id)).filter(Boolean); },
@@ -1262,7 +1314,7 @@ function handleAt(p){
 }
 
 /* ══ snapping / hit ═════════════════════════════════════════════════ */
-const keys={shift:false,space:false};
+const keys={shift:false,space:false,alt:false};
 /* The sheet is the ground truth; nothing can be marked off it. A corner placed
    in the surrounding mat measures nothing and produced walls floating outside
    the drawing. */
@@ -1271,29 +1323,192 @@ const toSheet=p=>({...p,x:clamp(p.x,0,S.srcW),y:clamp(p.y,0,S.srcH)});
 
 /* `skip` is the corner already under the pointer. Without it a dragged corner
    snaps to itself on the first move and never leaves the spot. */
-function snapPoint(p,anchor,skip){
-  const R=13/S.view.z;
-  let best=null,bd=R;
-  for(const n of S.nodes){
-    if(skip&&skip.includes(n.id)) continue;
-    const d=dist(n,p); if(d<bd){bd=d;best={x:n.x,y:n.y,id:n.id,kind:'node'};}
+/* ══ the snap engine ════════════════════════════════════════════════
+   Nine ways a point can be magnetic, in one resolver. Points beat lines: a
+   corner is a stronger claim than "somewhere along this direction", and when
+   two line constraints cross near the pointer their intersection wins over
+   either alone — which is how you land a wall exactly on the extension of one
+   wall and the perpendicular of another.
+
+   Everything the software infers is suppressible. Alt drops all of it and
+   leaves the raw pointer; Shift, which the tracing tool has always used for
+   this, leaves the user's own corners and drops the rest.
+
+   Every snap also reports a guide — the line that explains it — because a
+   point that jumps without saying why is not a tool, it is a surprise. */
+const R_PT=13, R_LINE=8;                   // screen px, so the feel is the same at any zoom
+
+/* p projected onto the infinite line through a in direction u (unit) */
+function projLine(p,a,u){
+  const t=(p.x-a.x)*u.x+(p.y-a.y)*u.y;
+  return {x:a.x+u.x*t,y:a.y+u.y*t,t};
+}
+function unit(a,b){ const L=Math.hypot(b.x-a.x,b.y-a.y)||1; return {x:(b.x-a.x)/L,y:(b.y-a.y)/L,L}; }
+function crossLines(a,ua,b,ub){
+  const d=ua.x*ub.y-ua.y*ub.x;
+  if(Math.abs(d)<1e-9) return null;                 // parallel explains nothing
+  const t=((b.x-a.x)*ub.y-(b.y-a.y)*ub.x)/d;
+  return {x:a.x+ua.x*t,y:a.y+ua.y*t};
+}
+/* the walls as geometry, skipping the ones the pointer is currently dragging —
+   a wall cannot be its own reference while it is moving */
+function snapSegs(skipWalls){
+  const out=[];
+  for(const w of S.walls){
+    if(skipWalls&&skipWalls.includes(w.id)) continue;
+    const a=node(w.a), b=node(w.b); if(!a||!b) continue;
+    if(dist(a,b)<1e-6) continue;
+    out.push({id:w.id,a:{x:a.x,y:a.y},b:{x:b.x,y:b.y},u:unit(a,b)});
   }
-  if(best) return best;                                  // the user's own corners win
-  if(!keys.shift){
+  return out;
+}
+
+function resolveSnap(p,opt){
+  opt=opt||{};
+  const anchor=opt.anchor||null, skip=opt.skipNodes||null, skipW=opt.skipWalls||null;
+  const raw={x:p.x,y:p.y,kind:null,guides:[]};
+  if(keys.alt) return raw;
+  /* A radius in screen pixels alone is a trap: zoomed out to fit an A3 sheet,
+     13px is nearly half a metre in the building, and a corner that jumps 45cm
+     to a magnet has destroyed the drawing rather than helped it. Every snap is
+     capped in real length as well — the same rule the drawing-corner snap
+     already had, applied to all of them. */
+  const z=S.view.z;
+  const Rp=Math.min(R_PT/z, S.mpp?0.25/S.mpp:Infinity);
+  const Rl=Math.min(R_LINE/z, S.mpp?0.15/S.mpp:Infinity);
+  const soft=!keys.shift;                    // Shift keeps only the user's own corners
+
+  /* ── tier A: points ─────────────────────────────────────────────── */
+  let pt=null, pd=Rp;
+  const takePt=(c,kind,guides)=>{ const d=dist(c,p); if(d<pd){ pd=d; pt={x:c.x,y:c.y,kind,guides:guides||[],id:c.id}; } };
+
+  if(SNAP.node) for(const n of S.nodes){
+    if(skip&&skip.includes(n.id)) continue;
+    takePt(n,'node');
+  }
+  if(pt) return pt;                          // the user's own corners always win
+
+  if(!soft) return raw;
+
+  const segs=(SNAP.mid||SNAP.inter||SNAP.perp||SNAP.ext||SNAP.par)?snapSegs(skipW):[];
+
+  if(SNAP.corner){
     /* 11 screen px, but never further than 15 cm in the real building — zoomed
        out on a 1:100 sheet that radius was reaching a quarter of a metre and
        pulling corners onto the wrong face, which bends the run visibly. */
-    const v=vecNear(p,Math.min(11/S.view.z, S.mpp?0.15/S.mpp:Infinity));
-    if(v) return v;
+    const v=vecNear(p,Math.min(11/z, S.mpp?0.15/S.mpp:Infinity));
+    if(v) takePt(v,'corner');
   }
-  if(anchor&&!keys.shift){
-    const dx=p.x-anchor.x, dy=p.y-anchor.y, L=Math.hypot(dx,dy);
-    if(L>1){
-      const step=Math.PI/4, ang=Math.atan2(dy,dx), sn=Math.round(ang/step)*step;
-      if(Math.abs(ang-sn)<0.13) return {x:anchor.x+Math.cos(sn)*L,y:anchor.y+Math.sin(sn)*L,kind:'ortho'};
+  if(SNAP.mid) for(const s of segs) takePt({x:(s.a.x+s.b.x)/2,y:(s.a.y+s.b.y)/2},'mid');
+  if(SNAP.inter) for(let i=0;i<segs.length;i++) for(let j=i+1;j<segs.length;j++){
+    const c=crossLines(segs[i].a,segs[i].u,segs[j].a,segs[j].u);
+    if(c&&dist(c,p)<pd) takePt(c,'inter',[guideThrough(segs[i],c),guideThrough(segs[j],c)]);
+  }
+  if(pt) return pt;
+
+  /* ── tier B: lines ──────────────────────────────────────────────── */
+  const lines=[];
+  const addLine=(a,u,kind,ref)=>{
+    const q=projLine(p,a,u);
+    const d=Math.hypot(q.x-p.x,q.y-p.y);
+    if(d<Rl) lines.push({a,u,kind,ref,q,d});
+  };
+  if(SNAP.ext) for(const s of segs){
+    const q=projLine(p,s.a,s.u);
+    if(q.t>-Rl&&q.t<s.u.L+Rl) continue;             // that is the wall itself, not its extension
+    addLine(s.a,s.u,'ext',s);
+  }
+  if(anchor){
+    if(SNAP.perp) for(const s of segs){
+      const n={x:-s.u.y,y:s.u.x};
+      addLine(anchor,n,'perp',s);                    // the line through the anchor at 90° to that wall
+    }
+    if(SNAP.par) for(const s of segs) addLine(anchor,s.u,'par',s);
+    if(SNAP.angle){
+      const step=Math.PI*SNAP.angleStep/180;
+      const ang=Math.atan2(p.y-anchor.y,p.x-anchor.x);
+      const sn=Math.round(ang/step)*step;
+      addLine(anchor,{x:Math.cos(sn),y:Math.sin(sn)},'angle',{deg:Math.round(sn*180/Math.PI)});
     }
   }
-  return {x:p.x,y:p.y,kind:null};
+  if(SNAP.perp&&!anchor) for(const s of segs){
+    /* with no anchor a perpendicular still means something: the foot of the
+       pointer on the wall, which is the nearest point on it */
+    const q=projLine(p,s.a,s.u);
+    if(q.t<0||q.t>s.u.L) continue;
+    if(Math.hypot(q.x-p.x,q.y-p.y)<Rl) lines.push({a:s.a,u:s.u,kind:'onwall',ref:s,q,d:Math.hypot(q.x-p.x,q.y-p.y)});
+  }
+
+  if(lines.length){
+    /* Nearest wins; among constraints at the same distance the one derived
+       from real geometry beats the one derived from a direction, because
+       "the extension of that wall" says more than "90° from here". */
+    const rank={ext:0,onwall:1,perp:2,par:3,angle:4};
+    lines.sort((a,b)=> (a.d-b.d) || (rank[a.kind]-rank[b.kind]));
+    /* Several constraints are often the same line — perpendicular to a wall and
+       parallel to the wall at right angles to it are one line, and a pair of
+       identical lines has no crossing to offer. Keep one of each. */
+    const keep=[];
+    for(const l of lines){
+      if(keep.some(k=>Math.abs(k.u.x*l.u.y-k.u.y*l.u.x)<1e-9 &&
+                      Math.abs((l.a.x-k.a.x)*k.u.y-(l.a.y-k.a.y)*k.u.x)<0.02)) continue;
+      keep.push(l);
+    }
+    lines.length=0; lines.push(...keep);
+    /* two constraints that cross near the pointer beat either one alone */
+    for(let i=1;i<lines.length;i++){
+      const c=crossLines(lines[0].a,lines[0].u,lines[i].a,lines[i].u);
+      if(c&&dist(c,p)<Rp*1.2)
+        return {x:c.x,y:c.y,kind:lines[0].kind+'+'+lines[i].kind,
+                guides:[guideFor(lines[0],c),guideFor(lines[i],c),
+                        refGuide(lines[0]),refGuide(lines[i])].filter(Boolean)};
+    }
+    const l=lines[0];
+    return {x:l.q.x,y:l.q.y,kind:l.kind,ref:l.ref,
+            guides:[guideFor(l,l.q),refGuide(l)].filter(Boolean)};
+  }
+
+  /* ── tier C: the grid, only when nothing else spoke ──────────────── */
+  if(SNAP.grid&&S.mpp){
+    const step=(SNAP.gridCm/100)/S.mpp;
+    const g={x:Math.round(p.x/step)*step,y:Math.round(p.y/step)*step};
+    if(dist(g,p)<Rl) return {x:g.x,y:g.y,kind:'grid',guides:[]};
+  }
+  return raw;
+}
+/* a guide is the line that explains the snap, clipped to something readable */
+function guideThrough(seg,c){
+  const reach=Math.max(seg.u.L,60/S.view.z);
+  return {kind:'ext',a:{x:c.x-seg.u.x*reach,y:c.y-seg.u.y*reach},
+                     b:{x:c.x+seg.u.x*reach,y:c.y+seg.u.y*reach}};
+}
+function guideFor(l,c){
+  if(l.kind==='ext'||l.kind==='onwall'){
+    const s=l.ref, near=dist(s.a,c)<dist(s.b,c)?s.a:s.b;
+    return {kind:l.kind,a:near,b:c};
+  }
+  /* An anchor guide that stops at the snapped point is the same line the wall
+     preview already draws, so it explains nothing. Run it past the point: what
+     the user needs to see is the line the point is sitting on. */
+  const over=34/S.view.z;
+  const u=unit(l.a,c);
+  return {kind:l.kind,a:l.a,b:{x:c.x+u.x*over,y:c.y+u.y*over}};
+}
+/* Perpendicular and parallel are claims about a particular wall. Marking that
+   wall is the difference between "there is a line here" and "this line answers
+   to that wall". */
+function refGuide(l){
+  if((l.kind!=='perp'&&l.kind!=='par')||!l.ref||!l.ref.a) return null;
+  return {kind:'ref',a:l.ref.a,b:l.ref.b};
+}
+
+function clearGuides(){ S.guides=[]; S.snap=null; if(snapState) snapState.textContent=''; }
+
+/* the old name, kept because tracing and calibration call it everywhere */
+function snapPoint(p,anchor,skip,skipWalls){
+  const r=resolveSnap(p,{anchor,skipNodes:skip,skipWalls});
+  S.guides=r.guides||[];
+  return r;
 }
 function addNode(p){
   if(p.id!==undefined) return p.id;
@@ -1331,7 +1546,14 @@ function sayPick(){
 /* Dragging a handle. An endpoint takes every wall that shares that corner with
    it, which is the whole point of a shared corner. */
 function dragHandle(p){
-  const s2=toSheet(snapPoint(p,null,drag.k==='end'?[drag.nodeId]:null));
+  const moving=drag.k==='openEdge'?[] :
+    S.walls.filter(w=>w.a===drag.nodeId||w.b===drag.nodeId||w.id===drag.wall).map(w=>w.id);
+  let anchor=null;
+  if(drag.k==='end'){
+    const w=wallById(drag.wall);
+    if(w) anchor=node(w.a===drag.nodeId?w.b:w.a)||null;
+  }
+  const s2=toSheet(snapPoint(p,anchor,drag.k==='end'?[drag.nodeId]:null,moving));
   drag.moved=true;
   if(drag.k==='end'){
     const n=node(drag.nodeId);
@@ -1355,6 +1577,7 @@ function dragHandle(p){
     : S.walls.filter(w=>w.a===drag.nodeId||w.b===drag.nodeId||w.id===drag.wall).map(w=>w.id);
   if(S.raised) syncWalls(ids.filter(Boolean));
   liveDim.textContent=dragReadout();
+  S.snap=s2; saySnap(anchor);
   draw();
 }
 function dragReadout(){
@@ -1371,7 +1594,7 @@ planEl.addEventListener('pointerdown',e=>{
   const r=planEl.getBoundingClientRect(), sp={x:e.clientX-r.left,y:e.clientY-r.top};
   if(e.button===1||keys.space){ panning=true;panStart={...sp,vx:S.view.x,vy:S.view.y};planEl.classList.add('panning');cv.setPointerCapture(e.pointerId);return; }
   if(e.button!==0) return;
-  keys.shift=e.shiftKey;
+  keys.shift=e.shiftKey; keys.alt=e.altKey;
   const p=toSrc(sp);
 
   if(!onSheet(p)&&(S.tool==='calibrate'||S.tool==='wall')){
@@ -1453,7 +1676,7 @@ planEl.addEventListener('pointermove',e=>{
   if(!S.src) return;
   const r=planEl.getBoundingClientRect(), sp={x:e.clientX-r.left,y:e.clientY-r.top};
   if(panning){ S.view.x=panStart.vx+(sp.x-panStart.x); S.view.y=panStart.vy+(sp.y-panStart.y); draw(); return; }
-  const p=toSrc(sp); S.cursor=p; keys.shift=e.shiftKey;
+  const p=toSrc(sp); S.cursor=p; keys.shift=e.shiftKey; keys.alt=e.altKey;
 
   if(marquee){ marquee.b={...p}; draw(); return; }
   if(drag){ dragHandle(p); return; }
@@ -1479,6 +1702,7 @@ planEl.addEventListener('pointermove',e=>{
     if(h) S.hoverWall=null;              // the handle owns the cursor, not the wall under it
   }else planEl.classList.remove('grabbable');
   liveDim.textContent = anchor ? (S.mpp?fmt(dist(anchor,S.snap)*S.mpp):Math.round(dist(anchor,S.snap))+' px') : '';
+  saySnap(anchor);
   draw();
 });
 
@@ -1505,7 +1729,7 @@ addEventListener('pointerup',()=>{
     const d=drag; drag=null;
     if(!d.moved) Hist.undo.pop();        // a click that moved nothing is not an edit
     else { touch(); reroom(); }
-    sync(); liveDim.textContent=''; draw(); return;
+    sync(); liveDim.textContent=''; clearGuides(); draw(); return;
   }
   if(panning){panning=false;planEl.classList.remove('panning');}
   if(dragOpening){
@@ -1521,6 +1745,7 @@ planEl.addEventListener('contextmenu',e=>{ if(S.tool==='wall'){e.preventDefault(
 addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'){ if(e.key==='Escape') e.target.blur(); return; }
   if(e.key==='Shift') keys.shift=true;
+  if(e.key==='Alt'){ keys.alt=true; e.preventDefault(); }
   if(e.code==='Space'){ keys.space=true; e.preventDefault(); }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); return; }
@@ -1534,8 +1759,9 @@ addEventListener('keydown',e=>{
   if(k==='a'&&live('#tAuto')) proposeWalls();
   if(k==='r'&&live('#tRaise')) raise();
   if(k==='e'&&live('#tExp')) togglePop('#exp',$('#tExp'));
+  if(k==='m'&&live('#tSnap')) togglePop('#snapPop',$('#tSnap'));
   /* a measurement with nothing anchoring it is not a measurement */
-  if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};Sel.clear();liveDim.textContent='';hideLen();closePops();
+  if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};Sel.clear();liveDim.textContent='';clearGuides();hideLen();closePops();
     if(S.proposal) cancelProposal(); else draw(); }
   if(k==='backspace'||k==='delete'){
     if(!Sel.size) return; e.preventDefault();
@@ -1560,15 +1786,13 @@ function deleteLabel(w,o){
 /* Arrow-nudging, which the status line has been promising. One centimetre a
    press, ten with Shift, and a run of presses collapses into a single undo step
    — thirty taps to slide a wall is one move, not thirty. */
-let lastNudge=0;
 function nudge(e){
   const dir={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]}[e.key];
   if(!dir) return;
   const cm=e.shiftKey?0.10:0.01;
   const step=S.mpp?cm/S.mpp:(e.shiftKey?10:1);       // sheet units
-  const now=performance.now();
-  if(now-lastNudge>900||Hist.undo[Hist.undo.length-1]?.label!=='הזזה') pushHistory('הזזה');
-  lastNudge=now;
+  if(!nudgeRun) pushHistory('הזזה');
+  nudgeRun=true;
 
   /* collect the corners first — a corner two selected walls share must not move twice */
   const ids=new Set();
@@ -1595,7 +1819,11 @@ function nudge(e){
   if(d){ const a=node(d.a), b=node(d.b);
     if(a&&b&&S.mpp) liveDim.textContent=fmt(dist(a,b)*S.mpp); }
 }
-addEventListener('keyup',e=>{ if(e.key==='Shift')keys.shift=false; if(e.code==='Space')keys.space=false; });
+addEventListener('keyup',e=>{ if(e.key==='Shift')keys.shift=false; if(e.key==='Alt')keys.alt=false;
+  if(e.code==='Space')keys.space=false; });
+/* Alt hands focus to the browser chrome on some platforms and the keyup never
+   arrives, which would leave snapping off with nothing on screen saying so */
+addEventListener('blur',()=>{ keys.shift=keys.alt=keys.space=false; });
 addEventListener('beforeunload',e=>{ if(S.dirty&&Cloud.on){ e.preventDefault(); e.returnValue=''; } });
 
 /* ══ calibration ════════════════════════════════════════════════════ */
@@ -1718,7 +1946,7 @@ function draw(){
   ctx.drawImage(S.src,x,y,S.srcW*z,S.srcH*z);
   if(S.walls.length||S.proposal){ ctx.fillStyle='rgba(255,255,255,.42)'; ctx.fillRect(x,y,S.srcW*z,S.srcH*z); }
   drawRooms(); drawProposal(); drawWalls(); drawOpenings(); drawChain(); drawCal();
-  drawHandles(); drawMarquee(); drawSnap();
+  drawGuides(); drawHandles(); drawMarquee(); drawSnap();
 }
 /* Handles are the selection made grabbable, so they are --rule like every other
    selection mark. Three shapes, one per verb: a square on a corner you can move,
@@ -1863,20 +2091,82 @@ function drawCal(){
   });
   ctx.restore();
 }
+/* The name of what caught, plus the angle when there is one — a magnet that
+   does not say what it grabbed is indistinguishable from a bug. */
+function saySnap(anchor){
+  const k=S.snap&&S.snap.kind;
+  if(!k){ snapState.textContent=''; return; }
+  const names=String(k).split('+').map(x=>SNAP_NAME[x]||(x==='onwall'?'על הקיר':x));
+  let t=names.join(' + ');
+  if(anchor&&S.snap){
+    const d=Math.round(Math.atan2(S.snap.y-anchor.y,S.snap.x-anchor.x)*180/Math.PI);
+    if(String(k).includes('angle')) t+=' '+((d%360)+360)%360+'°';
+  }
+  snapState.textContent=t;
+}
+/* Guides are graphite hairlines, not --rule: the yellow marks the point that
+   was caught, and a guide is the reason, not the result. */
+function drawGuides(){
+  if(!S.guides||!S.guides.length) return;
+  ctx.save();
+  for(const g of S.guides){
+    const A=toScreen(g.a), B=toScreen(g.b);
+    if(g.kind==='ref'){
+      /* the wall the claim answers to, bracketed rather than overdrawn */
+      const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy)||1, nx=-dy/L, ny=dx/L;
+      ctx.strokeStyle='rgba(35,33,30,.5)'; ctx.lineWidth=1.4; ctx.setLineDash([]);
+      ctx.beginPath();
+      [[A,1],[B,-1]].forEach(([P,s])=>{
+        ctx.moveTo(P.x+nx*7,P.y+ny*7); ctx.lineTo(P.x-nx*7,P.y-ny*7);
+        ctx.moveTo(P.x+nx*7,P.y+ny*7); ctx.lineTo(P.x+nx*7+s*dx/L*10,P.y+ny*7+s*dy/L*10);
+        ctx.moveTo(P.x-nx*7,P.y-ny*7); ctx.lineTo(P.x-nx*7+s*dx/L*10,P.y-ny*7+s*dy/L*10);
+      });
+      ctx.stroke();
+      continue;
+    }
+    ctx.strokeStyle='rgba(35,33,30,.55)'; ctx.lineWidth=1; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
+  }
+  ctx.restore();
+}
 function drawSnap(){
-  if(!S.snap||S.tool==='select') return;
+  if(!S.snap||(S.tool==='select'&&!drag)) return;
   const p=toScreen(S.snap);
   ctx.save(); ctx.strokeStyle='#E8B923';
-  if(S.snap.kind==='node'){ ctx.lineWidth=2; ctx.strokeRect(p.x-5,p.y-5,10,10); }
-  else if(S.snap.kind==='vector'){
-    ctx.lineWidth=1.8; ctx.beginPath();
-    ctx.moveTo(p.x,p.y-6);ctx.lineTo(p.x+6,p.y);ctx.lineTo(p.x,p.y+6);ctx.lineTo(p.x-6,p.y);
-    ctx.closePath(); ctx.stroke();
-  }
-  else if(S.snap.kind==='ortho'){
-    ctx.lineWidth=1.4; ctx.beginPath();
-    ctx.moveTo(p.x-7,p.y);ctx.lineTo(p.x+7,p.y);ctx.moveTo(p.x,p.y-7);ctx.lineTo(p.x,p.y+7); ctx.stroke();
-  }
+  const k=String(S.snap.kind);
+  ctx.lineWidth=1.8; ctx.lineJoin='miter';
+  const M={
+    node(){ ctx.lineWidth=2; ctx.strokeRect(p.x-5,p.y-5,10,10); },
+    corner(){ ctx.beginPath();
+      ctx.moveTo(p.x,p.y-6);ctx.lineTo(p.x+6,p.y);ctx.lineTo(p.x,p.y+6);ctx.lineTo(p.x-6,p.y);
+      ctx.closePath(); ctx.stroke(); },
+    mid(){ ctx.beginPath();
+      ctx.moveTo(p.x-6,p.y+4);ctx.lineTo(p.x+6,p.y+4);ctx.lineTo(p.x,p.y-6);
+      ctx.closePath(); ctx.stroke(); },
+    inter(){ ctx.lineWidth=2; ctx.beginPath();
+      ctx.moveTo(p.x-6,p.y-6);ctx.lineTo(p.x+6,p.y+6);
+      ctx.moveTo(p.x+6,p.y-6);ctx.lineTo(p.x-6,p.y+6); ctx.stroke(); },
+    perp(){ ctx.beginPath();                       // the draughtsman's right angle
+      ctx.moveTo(p.x-6,p.y-6);ctx.lineTo(p.x-6,p.y+6);ctx.lineTo(p.x+6,p.y+6);
+      ctx.moveTo(p.x-6,p.y+2);ctx.lineTo(p.x-2,p.y+2);ctx.lineTo(p.x-2,p.y+6); ctx.stroke(); },
+    ext(){ ctx.beginPath();
+      ctx.moveTo(p.x-6,p.y-6);ctx.lineTo(p.x-6,p.y+6);
+      ctx.moveTo(p.x-1,p.y);ctx.lineTo(p.x+7,p.y);
+      ctx.moveTo(p.x+3,p.y-4);ctx.lineTo(p.x+7,p.y);ctx.lineTo(p.x+3,p.y+4); ctx.stroke(); },
+    par(){ ctx.beginPath();
+      ctx.moveTo(p.x-6,p.y+5);ctx.lineTo(p.x+2,p.y-5);
+      ctx.moveTo(p.x-2,p.y+5);ctx.lineTo(p.x+6,p.y-5); ctx.stroke(); },
+    angle(){ ctx.lineWidth=1.4; ctx.beginPath();
+      ctx.moveTo(p.x-7,p.y);ctx.lineTo(p.x+7,p.y);ctx.moveTo(p.x,p.y-7);ctx.lineTo(p.x,p.y+7); ctx.stroke(); },
+    grid(){ ctx.beginPath(); ctx.arc(p.x,p.y,2.6,0,Math.PI*2); ctx.fillStyle='#E8B923'; ctx.fill(); },
+    onwall(){ ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2); ctx.stroke(); },
+  };
+  /* a compound snap draws both marks, offset, because it satisfied both */
+  const parts=k.split('+');
+  parts.forEach((part,i)=>{
+    const f=M[part]; if(!f) return;
+    ctx.save(); if(i) ctx.translate(0,-13); f(); ctx.restore();
+  });
   ctx.restore();
 }
 
@@ -2733,7 +3023,7 @@ $('#xJson').onclick=()=>{
 
 /* ══ boot ═══════════════════════════════════════════════════════════ */
 document.addEventListener('click',e=>{
-  if(!e.target.closest('#opt,#exp,#tOpt,#tExp')) closePops();
+  if(!e.target.closest('#opt,#exp,#snapPop,#tOpt,#tExp,#tSnap')) closePops();
 });
 sizeCanvas(); draw(); refresh(); sync();
 new ResizeObserver(()=>{sizeCanvas();draw();resize3D();}).observe(document.body);

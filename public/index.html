@@ -233,6 +233,22 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
   background:var(--sheet);padding:0 10px;font:inherit;font-size:14px;font-family:"Archivo Narrow";
   font-variant-numeric:tabular-nums;color:var(--ink);direction:ltr;text-align:start}
 #opt input:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px var(--rule-wash)}
+#snapPop{inset-inline-end:66px;width:270px;max-height:min(70vh,560px);overflow:auto}
+#snapPop .row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer}
+#snapPop .row:hover{background:var(--panel-2)}
+#snapPop .row input{width:17px;height:17px;accent-color:var(--ink);flex-shrink:0;cursor:pointer}
+#snapPop .row span{font-size:14px;color:var(--ink)}
+#snapPop .row svg{flex-shrink:0;color:var(--ink-2)}
+#snapPop .sep{height:1px;background:var(--line);margin:10px 2px}
+#snapPop .f{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 8px}
+#snapPop .f label{font-size:14px;color:var(--ink-2)}
+#snapPop .f .val{display:flex;align-items:center;gap:6px}
+#snapPop .f .u{font-family:"Archivo Narrow";font-size:12px;color:var(--ink-2)}
+#snapPop input[type=number]{width:66px;height:32px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  background:var(--sheet);padding:0 9px;font:inherit;font-size:14px;font-family:"Archivo Narrow";
+  font-variant-numeric:tabular-nums;color:var(--ink);direction:ltr;text-align:start}
+#snapPop input:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px var(--rule-wash)}
+#snapPop .note{font-size:12px;color:var(--ink-2);padding:8px 8px 0;line-height:1.5}
 #exp{inset-inline-end:66px;width:252px}
 #exp button{display:flex;align-items:center;justify-content:space-between;width:100%;padding:11px 12px;border:0;
   background:transparent;font:inherit;font-size:14px;color:var(--ink);cursor:pointer;border-radius:var(--r-sm);text-align:start}
@@ -428,6 +444,10 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
         <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.5v7"/><path d="M5 4.5L8 1.5l3 3"/><path d="M2 11.5l6 3 6-3"/></svg></button>
       <button class="tool" id="tOpt" data-tip="מידות" data-kb="," disabled>
         <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 5.5h13M1.5 5.5v-2M14.5 5.5v-2M5 5.5v-2M9.5 5.5v-2"/><path d="M1.5 11.5h13"/></svg></button>
+      <button class="tool" id="tSnap" data-tip="מגנטים" data-kb="M" disabled>
+        <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+          <path d="M3.5 13.5V7a4.5 4.5 0 019 0v6.5"/><path d="M3.5 10h3M9.5 10h3"/>
+          <path d="M3.5 13.5h3V10M9.5 13.5h3V10"/></svg></button>
       <button class="tool" id="tExp" data-tip="ייצוא" data-kb="E" disabled>
         <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 10.5V2"/><path d="M5 5L8 2l3 3"/><path d="M2.5 10v3.5h11V10"/></svg></button>
       <span class="spacer"></span>
@@ -452,6 +472,25 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
           <span class="val"><input type="number" id="oSill" value="0.90" step="0.05" min="0" max="2"><span class="u">מ׳</span></span></div>
       </div>
 
+      <div id="snapPop" class="pop">
+        <h3>מגנטים</h3>
+        <label class="row"><input type="checkbox" data-snap="node"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="4" width="10" height="10"/></svg><span>פינה שסימנתם</span></label>
+        <label class="row"><input type="checkbox" data-snap="corner"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M9 3l6 6-6 6-6-6z"/></svg><span>פינה בשרטוט עצמו</span></label>
+        <label class="row"><input type="checkbox" data-snap="mid"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 13h12L9 4z"/></svg><span>אמצע קיר</span></label>
+        <label class="row"><input type="checkbox" data-snap="inter"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 4l10 10M14 4L4 14"/></svg><span>חיתוך שני קירות</span></label>
+        <label class="row"><input type="checkbox" data-snap="perp"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 3v11h11"/><path d="M4 11h3v3"/></svg><span>ניצב לקיר</span></label>
+        <label class="row"><input type="checkbox" data-snap="ext"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3v12"/><path d="M6 9h9M12 6l3 3-3 3"/></svg><span>המשך של קיר</span></label>
+        <label class="row"><input type="checkbox" data-snap="par"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 14L8 4M10 14L15 4"/></svg><span>מקביל לקיר</span></label>
+        <label class="row"><input type="checkbox" data-snap="angle"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 14h12M3 14L13 5"/><path d="M8 14a6 6 0 002-3"/></svg><span>זווית קבועה</span></label>
+        <div class="sep"></div>
+        <label class="row"><input type="checkbox" data-snap="grid"><svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 7h12M3 11h12M7 3v12M11 3v12"/></svg><span>רשת</span></label>
+        <div class="f"><label for="sGrid">צעד הרשת</label>
+          <span class="val"><input type="number" id="sGrid" value="10" step="1" min="1" max="100"><span class="u">ס״מ</span></span></div>
+        <div class="f"><label for="sAngle">צעד הזווית</label>
+          <span class="val"><input type="number" id="sAngle" value="15" step="1" min="1" max="90"><span class="u">°</span></span></div>
+        <p class="note">Alt מבטל את כל המגנטים כל עוד הוא לחוץ. Shift משאיר רק את הפינות שסימנתם.</p>
+      </div>
+
       <div id="exp" class="pop">
         <h3>ייצוא</h3>
         <button id="xPng">תמונה של המבט <small>PNG</small></button>
@@ -464,6 +503,7 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
   <footer id="status">
     <span id="msg">פתחו קובץ PDF כדי להתחיל.</span>
     <span class="spacer"></span>
+    <span id="snapState" class="muted num"></span>
     <span id="liveDim" class="live"></span>
     <span id="vecState" class="muted"></span>
     <span id="tally" class="muted"></span>

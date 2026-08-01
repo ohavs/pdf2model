@@ -22,67 +22,67 @@ Strategy: **Restrained.** Warm neutrals carry every surface; one accent carries 
 
 | Token | Value | Job |
 |---|---|---|
-| `--mat` | `#8C877C` | Cutting mat. The canvas surround only. Gives the white sheet its contrast. |
-| `--board` | `#E8E4DC` | Museum board. Buttons, popovers, panels. |
-| `--board-2` | `#DBD6CB` | Deeper board. Topbar, instrument rail. |
-| `--board-3` | `#CBC5B8` | Pressed state. |
-| `--sheet` | `#FFFFFF` | The user's PDF. Never tinted, only dimmed to 34% once tracing starts. |
-| `--ink` | `#23211E` | Graphite. All body text, wall linework, status bar ground. |
-| `--ink-2` | `#5C574E` | Secondary text, inactive icons. |
+| `--mat` | `#807B71` | Cutting mat. The canvas surround only. Gives the white sheet its contrast. |
+| `--panel` | `#FBF9F5` | Museum board. Topbar, rail, popovers, buttons. |
+| `--panel-2` | `#F1EDE5` | Recessed board. Hover grounds, the model pane's empty state. |
+| `--panel-3` | `#E4DFD5` | Chips and segmented-control troughs. |
+| `--panel-4` | `#D6D0C4` | The stage ground, matched to `scene.background`. |
+| `--sheet` | `#FFFFFF` | The user's PDF. Never tinted, only dimmed to 42% once a proposal or a tracing sits on it. |
+| `--ink` | `#22201D` | Graphite. All body text, wall linework. |
+| `--ink-2` | `#55504A` | Every secondary text there is. |
 | `--ink-3` | `#8A8478` | **Linework only, never text.** Door swing arcs, the empty-state glyph. |
-| `--line` | `#B9B2A4` | Borders. |
-| `--line-soft` | `#CFC9BC` | Interior rules inside the sheet. |
+| `--line` | `#DDD7CB` | Structural borders. |
+| `--line-2` | `#C6BFB1` | Control borders. |
 | `--rule` | `#E8B923` | **Cutting-rule yellow.** |
 | `--blade` | `#A5352A` | Destruction and failure only. 4.61:1 as the failed-save text. |
 | `--ok` | `#3D6639` | Save confirmation only. 4.59:1 as the saved text. |
 
-**The yellow rule.** `--rule` is a fill on board, never a text color there, because yellow text on
-light board fails contrast. Text on yellow is always `--ink` — **8.71:1 measured on the render**,
-the same relationship as black markings on a real steel rule. The one place it is a text color is
-the live measurement in the `--ink` status bar, which measures the same 8.71:1 the other way round.
-
-It appears in exactly four places: the active instrument, the current selection, the live
-measurement being drawn or read out, and the scale chip while scale is still unset. Nothing
-decorative is yellow. If a fifth use appears, one of them is wrong — a closed room used to be
-washed in it and is now washed in graphite at 7%, which is what it always meant.
-
-**Tertiary text does not exist.** `--ink-3` measures 2.56:1 on `--board-2` and 3.72:1 on `--sheet`;
-there is no third text tint below `--ink-2` that clears AA on grounds this light. Everything that
-used to be tertiary text — the save state, the popover headings, the export formats, the step
-numbers, the timestamps — is `--ink-2`. Hierarchy below that comes from size, caps and tracking,
-not from a lighter grey.
+Surfaces are separated by tone and a soft shadow, not by a hairline on every edge. The previous
+build outlined everything in `#B9B2A4` on beige, which is the single thing that made it read as
+a decade old.
 
 ## Type
 
-**Archivo** for everything. One family, per Operate discipline — no display/body pairing.
+**Heebo** carries the Hebrew interface. One family for text, no display/body pairing.
 
-**Archivo Narrow** on every number that describes physical space: wall dimension strings, the
-scale readout, the length input, page numbers, timestamps. This mirrors how dimensions are
-lettered on real drawings, and it keeps long strings inside short walls.
+**Archivo Narrow** on every figure that describes physical space: wall dimension strings, the
+scale readout, the length input, page numbers, timestamps, the proposal count. These are set
+`direction: ltr; unicode-bidi: isolate` inside the RTL page — a dimension string is not prose and
+must not be reordered by the paragraph it sits in. This mirrors how dimensions are lettered on
+real drawings and keeps long strings inside short walls.
 
 `font-variant-numeric: tabular-nums` is on the `.num` class and every numeric input. Digits must
 not shift width while a measurement updates.
 
-Fixed rem-adjacent scale, not fluid: 9.5px uppercase labels (0.1em tracking), 11.5–12px controls,
-13px base, 19px on the single h1 in the empty state. Ratio stays near 1.15.
+Scale: 11px labels (0.04–0.06em tracking), 13px secondary, 14px base and controls, 15px lead
+paragraph, 26px on the single h1 in the empty state.
 
 ## Layout
 
-Three fixed rows: 44px topbar, flexible body, 26px status bar.
+**Right to left by construction.** `dir="rtl"` on the root and logical properties throughout —
+`inset-inline`, `border-inline-start`, `text-align: start`. Nothing is mirrored by hand, so the
+plan sits on the right, the model beside it, and the instrument rail on the far left edge.
 
-Body is a three-column grid whose middle column carries all the state:
-`1fr / 380px / 46px` normally, `1fr / 0 / 46px` before the model exists, `1fr / 62% / 46px`
+Three fixed rows: 56px topbar, flexible body, 30px status bar.
+
+Body is a three-column grid: `minmax(0,1fr) / 400px / 60px`, and `minmax(0,1fr) / 62% / 60px`
 when expanded. The plan is never smaller than the model; the sheet is the subject.
 
-Instruments live in a 46px right rail, ordered by the actual sequence of work — select, scale,
-wall, door, window, then raise, dimensions, export, then undo and clear pinned to the bottom.
-Disabled until their precondition is met, which is how the interface teaches the order.
+**The model pane is present from the first frame.** It used to collapse to zero width until a
+model existed, which hid the one sentence explaining how to get one — the raise instrument was
+disabled, the reason was invisible, and there was no sign a model pane existed at all. It now
+carries a live count of what is still missing, a progress bar and its own raise button, and the
+rail instrument marks itself the moment it becomes available.
 
 Every column is `minmax(0, 1fr)`, not `1fr`. A plain `1fr` lets the topbar's non-shrinking chips
 set a min-content floor on the whole app, which at 390px pushed the instrument rail off a screen
 that cannot scroll.
 
-Below 820px the model pane is removed rather than stacked. Tracing needs a pointer and a large
+Instruments live in a 60px rail at 42px targets, ordered by the actual sequence of work — select,
+scale, wall, door, window, detect, then raise, dimensions, export, then undo and clear pinned to
+the bottom. Disabled until their precondition is met, which is how the interface teaches the order.
+
+Below 900px the model pane is removed rather than stacked. Tracing needs a pointer and a large
 canvas; a phone gets the sheet and nothing else. The instruments that only act on the model —
 raise and export — are removed with it, along with their shortcuts; the wordmark drops to its
 glyph and the scale chip drops its label so the rail always fits.

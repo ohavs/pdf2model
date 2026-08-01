@@ -27,9 +27,15 @@ before any UI edit.
 
 Short version: architectural model shop. Chipboard mat, museum-board panels, graphite ink,
 one cutting-rule yellow (`--rule`) reserved for the active instrument, current selection, live
-measurement, and the unset-scale chip — four uses, never decorative, never as a text color.
-Archivo throughout, Archivo Narrow on every dimension string, tabular figures everywhere a
-number describes space. Operate mode: familiar affordances, restrained color, no modals.
+measurement, and the unset-scale chip — four uses, never decorative, never as a text color on
+board. Heebo for Hebrew text, Archivo Narrow on every dimension figure, tabular figures
+everywhere a number describes space. Operate mode: familiar affordances, restrained color,
+no modals — including the detection proposal, which is reviewed on the sheet itself.
+
+The control surface was rebuilt once, on the owner's call, because it read a decade old:
+36–42px targets, 8px radii, layered warm panels with soft shadows instead of hairline borders
+on beige. The material world did not change. Do not restart it again without the same kind of
+explicit instruction.
 
 Explicitly refused and not to be reintroduced: blueprint cyan-on-navy, cream-plus-serif
 editorial, dark-mode-plus-neon, feature-card grids, gradient text, emoji as icons.
@@ -45,17 +51,24 @@ access to `impeccable.style`; the original direction roll ran degraded without i
   signed go in a Cloud Function, never the client.
 - **Calibration is a gate.** No dimension is displayed, and no wall can be traced, before the
   user has set scale. Never estimate or infer a scale silently.
-- **Metric first.** Imperial is an equal option to add, never the default.
-- **Never invent geometry the user did not mark.** No auto-detected walls presented as fact.
-- Layout is RTL-ready by construction; keep it that way rather than retrofitting.
+- **Metric first.** Metres or centimetres, chosen in the calibration popover and remembered.
+  Imperial is an equal option to add, never the default.
+- **Never present geometry as fact that the user did not accept.** Detection may *propose* —
+  drawn as a reviewable overlay, every run toggleable, nothing entering the model until the
+  user accepts it. It may never assert. This replaces the earlier blanket ban on detection;
+  the ban was on fake certainty, and a proposal the user confirms carries none.
+- **Hebrew, RTL.** The interface is Hebrew and lays out right to left. Figures that describe
+  space stay LTR-isolated in Archivo Narrow — a dimension string is not prose.
 
 ## State of the work
 
-Built and working: PDF load with multi-page, pan and zoom, calibration, wall tracing with
-endpoint and 45° snapping, live dimension strings, doors and windows cut as real geometry,
-closed loops becoming floors, the rise animation, Model and Render material modes, orbit and
-eye-level cameras, undo, autosave to Firestore, PDF to Storage, recent-plans list, and PNG,
-OBJ and JSON export. On a vector page, tracing snaps to the drawing's own corners.
+Built and working: PDF load with multi-page, pan and zoom, calibration in metres or centimetres,
+**wall detection proposed from the drawing's own vector geometry and confirmed by the user**,
+manual wall tracing with endpoint, drawing-corner and 45° snapping, live dimension strings,
+doors and windows cut as real geometry, closed loops becoming floors, the rise animation, Model
+and Render material modes, orbit and eye-level cameras, undo, autosave to Firestore, PDF to
+Storage, recent-plans list, and PNG, OBJ and JSON export. Hebrew and RTL throughout. Marks are
+bounded by the sheet, and an edit on the paper reaches the model immediately.
 
 **Verified in a browser.** Driven end to end at 1440 and 390 against a real 1:50 vector plan:
 load, calibrate, trace, cut openings, raise, Model and Render, orbit and eye level, expand,

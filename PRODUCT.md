@@ -16,15 +16,17 @@ The first audience forgives a rough edge. The second does not, and is the reason
 
 Turn a flat architectural PDF into a measured, inhabitable interior — a 3D space you can look around, and images good enough to show someone.
 
-The mechanism the product owns: **the person points at what things are.** No magic auto-detection, no research-grade computer vision. The user marks a known length to set scale, then marks walls and openings with click, drag, and snapping. The software does the geometry, the materials, the lighting, and the rendering — everything that is genuinely hard — and asks the human only for the one thing a human answers instantly and a machine answers unreliably.
+The mechanism the product owns: **the person confirms what things are.** The user marks one known length to set scale — the one thing a human answers instantly and a machine answers unreliably. From there the software reads the drawing's own vector geometry and *proposes* the walls: pairs of parallel faces a plausible thickness apart, nothing learned and nothing guessed about what a symbol means. The proposal is drawn on the sheet, every run can be switched off, and not one line becomes geometry until the user accepts it. Then they edit it by hand — click, drag, snap, undo — and a change on the paper is a change to the model immediately.
+
+The distinction that matters: the software may propose, it may never assert. Auto-detection presented as fact would be exactly the fake certainty this product refuses.
 
 Success: a first-time visitor with a real PDF reaches a 3D room in under three minutes without reading instructions, and the result is proportioned correctly enough that an architect would not object.
 
 ## Scope
 
-**In:** vector and raster PDF input. Manual scale calibration. Wall, door, and window marking with snapping. Interior geometry. Materials, lighting, rendering. Single level.
+**In:** vector and raster PDF input. Manual scale calibration. Wall detection from a vector page, proposed and confirmed. Wall, door, and window marking with snapping. Interior geometry. Materials, lighting, rendering. Single level.
 
-**Out for now:** DWG/DXF. Scanned-plan auto-recognition. Exteriors, roofs, multi-story. Construction documentation. This is a visualization tool, not a drawing tool and not a CAD replacement.
+**Out for now:** DWG/DXF. Recognition on a *scanned* page — with no vector geometry there is nothing to read, and guessing from pixels is the research problem this product declines. Exteriors, roofs, multi-story. Construction documentation. This is a visualization tool, not a drawing tool and not a CAD replacement.
 
 ## Brand Personality
 
@@ -57,7 +59,7 @@ Baseline WCAG 2.1 AA.
 - Visible focus states on all controls, including canvas handles.
 - `prefers-reduced-motion` honored — the fold-up animation degrades to a cut.
 - Metric first, imperial as an equal option, chosen once and remembered.
-- Interface language: English first, with the layout built RTL-ready from the start rather than retrofitted.
+- Interface language: Hebrew, laid out right to left by construction. Figures stay LTR-isolated.
 
 ## Technical Constraints
 

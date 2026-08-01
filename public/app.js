@@ -16,6 +16,7 @@ const S = {
   dims:{wall:.20, ceil:2.70, door:.90, win:1.20, sill:.90},
   history:[],
   raised:false, mode:'model', cam:'orbit',
+  proposal:null,
   projectId:null, name:'תוכנית ללא שם', pdfBytes:null, pdfName:'', dirty:false
 };
 let uid = 1;
@@ -205,6 +206,7 @@ async function openBytes(bytes,name,page){
     $('#empty').style.display='none';
     $('#chipScale').hidden=false;
     ['#tCal','#tOpt'].forEach(s=>$(s).disabled=false);
+    $('#tAuto').disabled=!S.mpp;
     setTool(S.mpp?'wall':'calibrate');
     refresh();
     return true;
@@ -246,7 +248,7 @@ $('#pname').onkeydown=e=>{ if(e.key==='Enter') e.target.blur(); };
    traced corner lands on the architect's line instead of on a pixel the user
    aimed at. Nothing here draws a wall or decides what anything means — it only
    surfaces points the drawing already contains, and Shift ignores them. */
-const VEC={pts:null,grid:null,cell:8,token:0,announced:false};
+const VEC={pts:null,grid:null,segs:null,cell:8,token:0};
 const VEC_MAX=90000;
 
 const matMul=(a,b)=>[
@@ -254,7 +256,7 @@ const matMul=(a,b)=>[
   a[0]*b[2]+a[2]*b[3], a[1]*b[2]+a[3]*b[3],
   a[0]*b[4]+a[2]*b[5]+a[4], a[1]*b[4]+a[3]*b[5]+a[5]];
 
-function clearVectors(){ VEC.pts=null; VEC.grid=null; VEC.token++; }
+function clearVectors(){ VEC.pts=null; VEC.grid=null; VEC.segs=null; VEC.token++; }
 
 async function readVectors(page,vp,token){
   if(!window.pdfjsLib||!pdfjsLib.OPS) return;
@@ -265,7 +267,17 @@ async function readVectors(page,vp,token){
 
   const O=pdfjsLib.OPS, W=vp.width, H=vp.height;
   let m=vp.transform.slice();
-  const stack=[], xs=[], ys=[];
+  const stack=[], xs=[], ys=[], sg=[];
+  /* segments as well as endpoints: a wall is a pair of parallel faces, and you
+     cannot see a pair from endpoints alone. */
+  const seg=(x1,y1,x2,y2)=>{
+    if(sg.length>=VEC_MAX*2) return;
+    const ax=m[0]*x1+m[2]*y1+m[4], ay=m[1]*x1+m[3]*y1+m[5];
+    const bx=m[0]*x2+m[2]*y2+m[4], by=m[1]*x2+m[3]*y2+m[5];
+    if(!isFinite(ax)||!isFinite(ay)||!isFinite(bx)||!isFinite(by)) return;
+    if(Math.hypot(bx-ax,by-ay)<1.5) return;
+    sg.push(ax,ay,bx,by);
+  };
   const put=(x,y)=>{
     if(xs.length>=VEC_MAX) return;
     const px=m[0]*x+m[2]*y+m[4], py=m[1]*x+m[3]*y+m[5];
@@ -283,17 +295,23 @@ async function readVectors(page,vp,token){
     else if(fn===O.paintFormXObjectEnd){ if(stack.length) m=stack.pop(); }
     else if(fn===O.constructPath){
       const ops=a[0], co=a[1];
-      let k=0, sx=0, sy=0;
+      let k=0, sx=0, sy=0, cx=0, cy=0, open=false;
       for(let j=0;j<ops.length;j++){
         const op=ops[j];
-        if(op===O.moveTo){ sx=co[k++]; sy=co[k++]; put(sx,sy); }
-        else if(op===O.lineTo){ put(co[k++],co[k++]); }
-        else if(op===O.curveTo){ k+=4; put(co[k++],co[k++]); }
-        else if(op===O.curveTo2||op===O.curveTo3){ k+=2; put(co[k++],co[k++]); }
-        else if(op===O.closePath){ /* back to the subpath start, already recorded */ }
+        if(op===O.moveTo){ sx=cx=co[k++]; sy=cy=co[k++]; put(cx,cy); open=true; }
+        else if(op===O.lineTo){
+          const nx=co[k++], ny=co[k++];
+          put(nx,ny); if(open) seg(cx,cy,nx,ny);
+          cx=nx; cy=ny;
+        }
+        else if(op===O.curveTo){ k+=4; cx=co[k++]; cy=co[k++]; put(cx,cy); }
+        else if(op===O.curveTo2||op===O.curveTo3){ k+=2; cx=co[k++]; cy=co[k++]; put(cx,cy); }
+        else if(op===O.closePath){ if(open) seg(cx,cy,sx,sy); cx=sx; cy=sy; }
         else if(op===O.rectangle){
           const x=co[k++], y=co[k++], w=co[k++], h=co[k++];
           put(x,y); put(x+w,y); put(x+w,y+h); put(x,y+h);
+          seg(x,y,x+w,y); seg(x+w,y,x+w,y+h); seg(x+w,y+h,x,y+h); seg(x,y+h,x,y);
+          cx=sx=x; cy=sy=y; open=true;
         }
       }
     }
@@ -313,7 +331,7 @@ async function readVectors(page,vp,token){
     const key=Math.floor(pts[i]/VEC.cell)+','+Math.floor(pts[i+1]/VEC.cell);
     const b=grid.get(key); if(b) b.push(i); else grid.set(key,[i]);
   }
-  VEC.pts=pts; VEC.grid=grid;
+  VEC.pts=pts; VEC.grid=grid; VEC.segs=sg;
 }
 
 function vecNear(p,R){
@@ -329,6 +347,214 @@ function vecNear(p,R){
     }
   }
   return best;
+}
+
+/* ══ wall detection ═════════════════════════════════════════════════
+   A wall on a drawing is two parallel faces a plausible thickness apart. We
+   look for exactly that, and for nothing else — no learning, no guessing at
+   what a symbol means. What comes out is a PROPOSAL: it is drawn as a dashed
+   overlay, every run can be switched off, and not one line becomes geometry
+   until the user accepts it. Nothing is ever presented as measured fact that
+   the user did not agree to. */
+const DET={minLen:0.55, tMin:0.05, tMax:0.42, angTol:0.030, overlap:0.60, joinTol:0.25};
+
+function detectWalls(){
+  if(!VEC.segs||!S.mpp) return [];
+  const px=v=>v/S.mpp;                       // metres → source pixels
+  const minLen=px(DET.minLen), tMin=px(DET.tMin), tMax=px(DET.tMax);
+  const sg=VEC.segs;
+
+  /* keep the long, straight faces and index them by direction */
+  const segs=[];
+  for(let i=0;i<sg.length;i+=4){
+    const x1=sg[i],y1=sg[i+1],x2=sg[i+2],y2=sg[i+3];
+    const dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy);
+    if(L<minLen) continue;
+    let th=Math.atan2(dy,dx); if(th<0) th+=Math.PI; if(th>=Math.PI-1e-9) th=0;
+    segs.push({i:segs.length,x1,y1,x2,y2,th,L,ux:dx/L,uy:dy/L});
+    if(segs.length>6000) break;
+  }
+  if(segs.length<2) return [];
+
+  const buckets=new Map();
+  const key=th=>Math.round(th/DET.angTol);
+  for(const s of segs){
+    const k=key(s.th);
+    for(const kk of [k-1,k,k+1]){ const b=buckets.get(kk); if(b) b.push(s); else buckets.set(kk,[s]); }
+  }
+
+  /* a pair of parallel faces, close enough and overlapping enough, is a wall */
+  const cands=[];
+  const seen=new Set();
+  for(const [,list] of buckets){
+    for(let i=0;i<list.length;i++)for(let j=i+1;j<list.length;j++){
+      const a=list[i], b=list[j];
+      let d=Math.abs(a.th-b.th); d=Math.min(d,Math.PI-d);
+      if(d>DET.angTol*1.5) continue;
+      /* perpendicular gap between the two lines */
+      const nx=-a.uy, ny=a.ux;
+      const gap=Math.abs((b.x1-a.x1)*nx+(b.y1-a.y1)*ny);
+      if(gap<tMin||gap>tMax) continue;
+      /* projected overlap along the shared direction */
+      const t=p=>(p.x-a.x1)*a.ux+(p.y-a.y1)*a.uy;
+      const a0=0, a1=a.L;
+      let b0=t({x:b.x1,y:b.y1}), b1=t({x:b.x2,y:b.y2});
+      if(b0>b1){ const s2=b0; b0=b1; b1=s2; }
+      const lo=Math.max(a0,b0), hi=Math.min(a1,b1);
+      const ov=hi-lo;
+      if(ov<minLen||ov<DET.overlap*Math.min(a.L,b.L)) continue;
+      const id=Math.min(a.i,b.i)+':'+Math.max(a.i,b.i); if(seen.has(id)) continue; seen.add(id);
+      /* centreline: the overlapping span, pushed half the gap toward b */
+      const side=((b.x1-a.x1)*nx+(b.y1-a.y1)*ny)>0?1:-1;
+      const ox=nx*side*gap/2, oy=ny*side*gap/2;
+      cands.push({
+        a:{x:a.x1+a.ux*lo+ox, y:a.y1+a.uy*lo+oy},
+        b:{x:a.x1+a.ux*hi+ox, y:a.y1+a.uy*hi+oy},
+        th:a.th, t:gap*S.mpp
+      });
+    }
+  }
+  cands.sort((a,b)=>dist(b.a,b.b)-dist(a.a,a.b));
+  return joinRuns(mergeCollinear(cands,px(0.12)),px(DET.joinTol));
+}
+
+/* two candidates on the same line that overlap or nearly touch are one wall */
+function mergeCollinear(cands,tol){
+  const out=[];
+  for(const c of cands){
+    let merged=false;
+    for(const o of out){
+      const ux=Math.cos(o.th), uy=Math.sin(o.th);
+      let d=Math.abs(o.th-c.th); d=Math.min(d,Math.PI-d);
+      if(d>DET.angTol*1.5) continue;
+      const nx=-uy, ny=ux;
+      if(Math.abs((c.a.x-o.a.x)*nx+(c.a.y-o.a.y)*ny)>tol) continue;
+      const t=p=>(p.x-o.a.x)*ux+(p.y-o.a.y)*uy;
+      const oe=t(o.b), ca=t(c.a), cb=t(c.b);
+      const lo=Math.min(0,oe,ca,cb), hi=Math.max(0,oe,ca,cb);
+      if(Math.min(ca,cb)>Math.max(0,oe)+tol||Math.max(ca,cb)<Math.min(0,oe)-tol) continue;
+      const bx=o.a.x, by=o.a.y;
+      o.a={x:bx+ux*lo,y:by+uy*lo}; o.b={x:bx+ux*hi,y:by+uy*hi};
+      o.t=Math.max(o.t,c.t); merged=true; break;
+    }
+    if(!merged) out.push({...c});
+  }
+  return out;
+}
+
+/* pull endpoints that nearly meet onto one shared corner, so the runs connect */
+function joinRuns(runs,tol){
+  const ends=[];
+  runs.forEach((r,i)=>{ ends.push({r:i,k:'a',p:r.a}); ends.push({r:i,k:'b',p:r.b}); });
+  const used=new Array(ends.length).fill(false);
+  for(let i=0;i<ends.length;i++){
+    if(used[i]) continue;
+    const group=[i];
+    for(let j=i+1;j<ends.length;j++){
+      if(used[j]||ends[j].r===ends[i].r) continue;
+      if(dist(ends[i].p,ends[j].p)<tol){ group.push(j); used[j]=true; }
+    }
+    if(group.length<2) continue;
+    let sx=0,sy=0;
+    for(const g of group){ sx+=ends[g].p.x; sy+=ends[g].p.y; }
+    const c={x:sx/group.length,y:sy/group.length};
+    for(const g of group) runs[ends[g].r][ends[g].k]={...c};
+  }
+  return runs.filter(r=>dist(r.a,r.b)>1);
+}
+
+/* ══ proposal ═══════════════════════════════════════════════════════ */
+function proposeWalls(){
+  if(!S.mpp){ toast('קודם קבעו קנה מידה — בלי קנה מידה אי אפשר לדעת מה עובי קיר.'); return; }
+  if(!VEC.segs||!VEC.segs.length){
+    toast('בעמוד הזה אין קווים וקטוריים לזהות. סמנו את הקירות ידנית.');
+    return;
+  }
+  say('מזהה קירות…');
+  setTimeout(()=>{
+    const runs=detectWalls();
+    if(!runs.length){
+      S.proposal=null; syncProposal(); draw();
+      toast('לא זוהו קירות בעמוד הזה. סמנו אותם ידנית.');
+      say(PROMPT[S.tool]);
+      return;
+    }
+    S.proposal=runs.map(r=>({a:r.a,b:r.b,on:true}));
+    setTool('select'); syncProposal(); draw();
+    say('בדקו את ההצעה. לחיצה על קיר מוציאה או מחזירה אותו.');
+  },30);
+}
+
+function syncProposal(){
+  const bar=$('#propBar'), p=S.proposal;
+  bar.hidden=!p;
+  if(!p) return;
+  const on=p.filter(w=>w.on).length;
+  $('#propCount').textContent=on;
+  $('#propAccept').disabled=!on;
+}
+
+function acceptProposal(){
+  const p=S.proposal; if(!p) return;
+  const keep=p.filter(w=>w.on);
+  if(!keep.length) return;
+  pushHistory();
+  /* one node per corner, so the accepted runs share endpoints and can close rooms */
+  const tol=0.05/S.mpp;
+  const at=q=>{
+    for(const n of S.nodes) if(dist(n,q)<tol) return n.id;
+    const n={id:uid++,x:q.x,y:q.y}; S.nodes.push(n); return n.id;
+  };
+  for(const w of keep){
+    const a=at(w.a), b=at(w.b);
+    if(a!==b) S.walls.push({a,b,id:uid++});
+  }
+  S.proposal=null; syncProposal();
+  refresh(); draw(); touch(); if(S.raised) build3D();
+  say('הקירות התקבלו. אפשר לערוך אותם, לחתוך פתחים, או להרים.');
+  toast(keep.length+' קירות נוספו. הם שלכם עכשיו — אפשר לגרור, למחוק ולהוסיף.');
+}
+
+function cancelProposal(){
+  S.proposal=null; syncProposal(); draw(); say(PROMPT[S.tool]);
+}
+
+function proposalAt(p){
+  if(!S.proposal) return -1;
+  const R=10/S.view.z;
+  for(let i=S.proposal.length-1;i>=0;i--){
+    const w=S.proposal[i];
+    const vx=w.b.x-w.a.x, vy=w.b.y-w.a.y, L2=vx*vx+vy*vy; if(!L2) continue;
+    const t=clamp(((p.x-w.a.x)*vx+(p.y-w.a.y)*vy)/L2,0,1);
+    if(Math.hypot(p.x-(w.a.x+vx*t),p.y-(w.a.y+vy*t))<R) return i;
+  }
+  return -1;
+}
+
+function drawProposal(){
+  if(!S.proposal) return;
+  const tPx=(S.dims.wall/S.mpp)*S.view.z;
+  ctx.save();
+  for(const w of S.proposal){
+    const A=toScreen(w.a), B=toScreen(w.b);
+    const line=()=>{ ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke(); };
+    ctx.lineCap='butt';
+    if(w.on){
+      /* a pale band the thickness of the proposed wall, so it reads on black
+         poché as well as on white paper, then the dashed centreline on top */
+      ctx.setLineDash([]);
+      ctx.strokeStyle='rgba(255,255,255,.85)'; ctx.lineWidth=Math.max(3,tPx); line();
+      ctx.strokeStyle='rgba(34,32,29,.22)'; ctx.lineWidth=Math.max(3,tPx); line();
+      ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=3.4; line();
+      ctx.strokeStyle='#22201D'; ctx.lineWidth=1.5; ctx.setLineDash([7,4]); line();
+    }else{
+      ctx.setLineDash([]);
+      ctx.strokeStyle='rgba(255,255,255,.75)'; ctx.lineWidth=3.2; line();
+      ctx.strokeStyle='#A5352A'; ctx.lineWidth=1.2; ctx.setLineDash([3,4]); line();
+    }
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 function vecState(){
@@ -403,6 +629,7 @@ $('#tUndo').onclick=undo;
 $('#tClear').onclick=()=>{
   if(!S.walls.length&&!S.openings.length) return;
   pushHistory(); S.nodes=[];S.walls=[];S.rooms=[];S.openings=[];S.chain=[];S.sel=null;
+  S.proposal=null; syncProposal();
   S.raised=false; clear3D(); refresh(); draw(); touch();
   say('הסימון נמחק. קנה המידה נשמר.');
 };
@@ -500,7 +727,7 @@ function openingAt(p){
 let panning=false, panStart=null, dragOpening=-1;
 
 planEl.addEventListener('pointerdown',e=>{
-  if(!S.src||e.target.closest('#lenPop,#zoom,#stageBar')) return;
+  if(!S.src||e.target.closest('#lenPop,#zoom,#stageBar,#propBar')) return;
   closePops();
   const r=planEl.getBoundingClientRect(), sp={x:e.clientX-r.left,y:e.clientY-r.top};
   if(e.button===1||keys.space){ panning=true;panStart={...sp,vx:S.view.x,vy:S.view.y};planEl.classList.add('panning');cv.setPointerCapture(e.pointerId);return; }
@@ -543,6 +770,13 @@ planEl.addEventListener('pointerdown',e=>{
     refresh(); draw(); touch(); if(S.raised) build3D(); return;
   }
   if(S.tool==='select'){
+    const pi=proposalAt(p);
+    if(pi>=0){
+      const w=S.proposal[pi]; w.on=!w.on;
+      syncProposal(); draw();
+      say(w.on?'הקיר חזר להצעה.':'הקיר הוצא מההצעה. לחצו שוב כדי להחזיר.');
+      return;
+    }
     const oi=openingAt(p);
     if(oi>=0){ S.sel={t:'opening',i:oi}; dragOpening=oi; pushHistory(); cv.setPointerCapture(e.pointerId); draw(); return; }
     const hit=wallAt(p);
@@ -590,10 +824,12 @@ addEventListener('keydown',e=>{
   if(k==='w') setTool('wall');
   if(k==='d') setTool('door');
   if(k==='n') setTool('window');
+  if(k==='a'&&live('#tAuto')) proposeWalls();
   if(k==='r'&&live('#tRaise')) raise();
   if(k==='e'&&live('#tExp')) togglePop('#exp',$('#tExp'));
   /* a measurement with nothing anchoring it is not a measurement */
-  if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};S.sel=null;liveDim.textContent='';hideLen();closePops();draw(); }
+  if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};S.sel=null;liveDim.textContent='';hideLen();closePops();
+    if(S.proposal) cancelProposal(); else draw(); }
   if(k==='backspace'||k==='delete'){
     if(!S.sel) return; e.preventDefault(); pushHistory();
     if(S.sel.t==='opening') S.openings.splice(S.sel.i,1);
@@ -650,8 +886,10 @@ function applyLength(){
   hideLen(); S.cal={a:null,b:null};
   ['#tWall','#tDoor','#tWin'].forEach(s=>$(s).disabled=false);
   setTool('wall'); touch();
+  $('#tAuto').disabled=false;
   say('קנה המידה נקבע. עכשיו סמנו את הקירות — לחצו פינה אחר פינה.');
   refresh();
+  if(VEC.segs&&VEC.segs.length) proposeWalls();
 }
 $('#lenOk').onclick=applyLength;
 $('#lenIn').onkeydown=e=>{ if(e.key==='Enter'){e.preventDefault();applyLength();} };
@@ -685,6 +923,10 @@ function refresh(){
   }
 }
 $('#stageRaise').onclick=raise;
+$('#tAuto').onclick=proposeWalls;
+$('#propAccept').onclick=acceptProposal;
+$('#propCancel').onclick=cancelProposal;
+$('#propRedo').onclick=proposeWalls;
 
 /* ══ 2d ═════════════════════════════════════════════════════════════ */
 function draw(){
@@ -699,8 +941,8 @@ function draw(){
   ctx.restore();
   ctx.imageSmoothingQuality='high';
   ctx.drawImage(S.src,x,y,S.srcW*z,S.srcH*z);
-  if(S.walls.length){ ctx.fillStyle='rgba(255,255,255,.34)'; ctx.fillRect(x,y,S.srcW*z,S.srcH*z); }
-  drawRooms(); drawWalls(); drawOpenings(); drawChain(); drawCal(); drawSnap();
+  if(S.walls.length||S.proposal){ ctx.fillStyle='rgba(255,255,255,.42)'; ctx.fillRect(x,y,S.srcW*z,S.srcH*z); }
+  drawRooms(); drawProposal(); drawWalls(); drawOpenings(); drawChain(); drawCal(); drawSnap();
 }
 function drawRooms(){
   if(!S.rooms.length) return;

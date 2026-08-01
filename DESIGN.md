@@ -102,6 +102,11 @@ outline at 1px offset, on canvas handles as well as buttons.
 - **The model is framed, not guessed.** On the first raise the camera fits the eight corners of
   the plan's bounding box at the opening orbit angles, against the pane's own aspect. The stage is
   a tall narrow column, so it is the horizontal half-angle that sets the distance.
+- **The proposal is reviewed on the sheet, never in a modal.** Detected walls are drawn as a
+  pale band the thickness of the wall with a dashed graphite centreline — legible on black
+  poché and on white paper alike — and a run switched off goes to a thin blade-red dash. A bar
+  over the sheet carries the count and the three verbs. Yellow stays out of it: a proposal is
+  not a selection, not a measurement, and not an instrument.
 - **Three snap marks, one language.** A square on one of the user's own corners, a **diamond on a
   corner belonging to the drawing itself**, a cross on the 45° lock. All in `--rule`, because all
   three are the live measurement. Shift suppresses everything the software inferred and leaves the

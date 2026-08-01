@@ -276,13 +276,14 @@ async function readVectors(page,vp,token){
   const stack=[], xs=[], ys=[], sg=[];
   /* segments as well as endpoints: a wall is a pair of parallel faces, and you
      cannot see a pair from endpoints alone. */
+  let pathFrom=0;
   const seg=(x1,y1,x2,y2)=>{
     if(sg.length>=VEC_MAX*2) return;
     const ax=m[0]*x1+m[2]*y1+m[4], ay=m[1]*x1+m[3]*y1+m[5];
     const bx=m[0]*x2+m[2]*y2+m[4], by=m[1]*x2+m[3]*y2+m[5];
     if(!isFinite(ax)||!isFinite(ay)||!isFinite(bx)||!isFinite(by)) return;
     if(Math.hypot(bx-ax,by-ay)<1.5) return;
-    sg.push(ax,ay,bx,by);
+    sg.push(ax,ay,bx,by,0);          // 5th value: 1 once we learn the path was filled
   };
   const put=(x,y)=>{
     if(xs.length>=VEC_MAX) return;
@@ -299,7 +300,14 @@ async function readVectors(page,vp,token){
     else if(fn===O.transform) m=matMul(m,a);
     else if(fn===O.paintFormXObjectBegin){ stack.push(m.slice()); if(a&&a[0]) m=matMul(m,a[0]); }
     else if(fn===O.paintFormXObjectEnd){ if(stack.length) m=stack.pop(); }
+    else if(fn===O.fill||fn===O.eoFill||fn===O.fillStroke||fn===O.eoFillStroke){
+      /* Wall poché is filled; a window symbol, a door swing and furniture are
+         stroked. Knowing which is which is the only way to see that a wall stops
+         at an opening — the glazing lines sit exactly where the faces would be. */
+      for(let k=pathFrom;k<sg.length;k+=5) sg[k+4]=1;
+    }
     else if(fn===O.constructPath){
+      pathFrom=sg.length;
       const ops=a[0], co=a[1];
       let k=0, sx=0, sy=0, cx=0, cy=0, open=false;
       for(let j=0;j<ops.length;j++){
@@ -479,7 +487,7 @@ function detectWalls(){
 
   /* keep the long, straight faces and index them by direction */
   const segs=[];
-  for(let i=0;i<sg.length;i+=4){
+  for(let i=0;i<sg.length;i+=5){
     const x1=sg[i],y1=sg[i+1],x2=sg[i+2],y2=sg[i+3];
     const dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy);
     if(L<minLen) continue;
@@ -647,13 +655,13 @@ function autoBuild(){
   }
   S.proposal=runs.map(r=>({a:r.a,b:r.b,on:true}));
   acceptProposal(true);
-  showAutoBar(g,runs.length);
+  showAutoBar(g,runs.length,S.openings.length);
   setTool('select');
   if(!$('#tRaise').disabled) raise();
   say('המודל מוכן. לחצו על קיר כדי לערוך אותו, או הוסיפו דלתות וחלונות.');
 }
 
-function showAutoBar(g,n){
+function showAutoBar(g,n,op){
   const bar=$('#autoBar'); if(!bar) return;
   bar.hidden=false;
   $('#autoScale').textContent=g.label;
@@ -661,6 +669,8 @@ function showAutoBar(g,n){
     :g.how==='dims'?'חושב מהמידות הרשומות':'נקרא מהשרטוט ואומת מול המידות';
   $('#autoWalls').textContent=n;
   $('#autoWallsWrap').hidden=!n;
+  $('#autoOpen').textContent=op||0;
+  $('#autoOpenWrap').hidden=!op;
 }
 function hideAutoBar(){ const b=$('#autoBar'); if(b) b.hidden=true; }
 $('#autoManual').onclick=()=>{
@@ -749,7 +759,7 @@ function findRooms(){
     segsOf.push({a,b,t:w.t,L:dist(a,b),th:Math.atan2(b.y-a.y,b.x-a.x)});
   }
   const bridges=[];
-  const maxGap=1.4/S.mpp;
+  const maxGap=1.9/S.mpp;
   for(let i=0;i<segsOf.length;i++)for(let j=i+1;j<segsOf.length;j++){
     const A=segsOf[i], B=segsOf[j];
     let d=Math.abs(A.th-B.th); d=Math.min(d,Math.PI-d);
@@ -764,7 +774,46 @@ function findRooms(){
     if(best) bridges.push({a:best[0],b:best[1],t:Math.max(A.t||0,B.t||0)});
   }
 
-  for(const w of segsOf.concat(bridges)){
+  /* The other way a room leaks: a wall stops short of the wall it runs into,
+     because the piece between the last doorway and the corner was too small to
+     detect. Measured on the test sheet — every wall present, but the partitions
+     only 64-81% covered, and the shortfall is exactly the door holes and the
+     stubs beside them. So from any free end, march along the wall's own line and
+     if it meets a crossing wall within 2 m, close the gap. Only a run that
+     actually lands on another wall is extended; one ending in open space is
+     left alone, so a peninsula does not sprout. Grid only — the model keeps its
+     real geometry and its real openings. */
+  const near=(p,B)=>{
+    const vx=B.b.x-B.a.x, vy=B.b.y-B.a.y, L2=vx*vx+vy*vy; if(!L2) return 1e9;
+    const t=clamp(((p.x-B.a.x)*vx+(p.y-B.a.y)*vy)/L2,0,1);
+    return Math.hypot(p.x-(B.a.x+vx*t),p.y-(B.a.y+vy*t));
+  };
+  const reach=2.0/S.mpp, joined=0.14/S.mpp;
+  const extend=[];
+  for(const A of segsOf){
+    for(const [end,other] of [[A.a,A.b],[A.b,A.a]]){
+      let touching=false;
+      for(const B of segsOf){ if(B!==A&&near(end,B)<joined){ touching=true; break; } }
+      if(touching) continue;
+      const L=Math.hypot(end.x-other.x,end.y-other.y); if(L<1) continue;
+      const ux=(end.x-other.x)/L, uy=(end.y-other.y)/L;
+      let best=null;
+      for(const B of segsOf){
+        if(B===A) continue;
+        let d=Math.abs(A.th-B.th); d=Math.min(d,Math.PI-d);
+        if(d<0.35) continue;                                  // must genuinely cross
+        const bx=B.b.x-B.a.x, by=B.b.y-B.a.y;
+        const den=ux*by-uy*bx; if(Math.abs(den)<1e-9) continue;
+        const dx=B.a.x-end.x, dy=B.a.y-end.y;
+        const tr=(dx*by-dy*bx)/den, ts=(dx*uy-dy*ux)/den;
+        if(tr<=0||tr>reach||ts<-0.03||ts>1.03) continue;
+        if(!best||tr<best) best=tr;
+      }
+      if(best) extend.push({a:{...end},b:{x:end.x+ux*best,y:end.y+uy*best},t:A.t});
+    }
+  }
+
+  for(const w of segsOf.concat(bridges,extend)){
     const a=w.a,b=w.b;
     const th=Math.max(S.dims.wall,(w.t||0))/S.mpp;
     const half=Math.max(1,Math.round(th/cell/2));
@@ -887,6 +936,16 @@ function acceptProposal(quiet){
   for(const w of keep){
     const a=at(w.a), b=at(w.b);
     if(a!==b) S.walls.push({a,b,id:uid++});
+  }
+  S.rooms=findRooms();
+  if(!S.openings.length){
+    const a=mergeAcrossOpenings();       // rebuilds S.walls, so rooms come after
+    S.rooms=findRooms();
+    const b=detectOpenings();
+    const seen=new Set();
+    S.openings=[...a,...b].filter(o=>{
+      const k=o.wall+':'+Math.round(o.u*40); if(seen.has(k)) return false; seen.add(k); return true;
+    });
   }
   reroom();
   S.proposal=null; syncProposal();
@@ -1598,6 +1657,168 @@ function buildMaterials(){
   MAT.boardW=new THREE.MeshStandardMaterial({color:0xCFC8BA,roughness:.94,metalness:0});
   MAT.boardF=new THREE.MeshStandardMaterial({color:0xB4AB99,roughness:.96,metalness:0});
   MAT.built=true;
+}
+
+/* ══ doors and windows, from the gaps ═══════════════════════════════
+   An opening is not drawn on a plan — it is drawn by ABSENCE. The wall poché
+   simply stops, and a swing arc or a pair of thin lines fills the hole. So we
+   do not look for door symbols; we measure where each wall's own faces are
+   missing, which the coverage analysis already showed lines up exactly with the
+   openings. What it is follows from where it is and how wide: an interior gap
+   is a door, a wide gap on an outside wall is a window, a narrow one is the
+   front door. */
+/* A door is door-width. A hole wider than that in an outside wall is a window;
+   wider than that inside is a passage, which is a door with no leaf. Anything
+   past 2.5 m is a wall the detector missed, not an opening — calling it a door
+   would put a 2.7 m hole in the model and claim it was measured. */
+function openingKind(wm,ext){
+  if(wm<0.6||wm>2.55) return null;
+  if(wm<=1.25) return 'door';
+  return ext?'window':'door';
+}
+
+function wallIsExterior(a,b){
+  if(!S.rooms.length) return true;
+  const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+  const L=dist(a,b)||1;
+  const nx=-(b.y-a.y)/L, ny=(b.x-a.x)/L;
+  const off=(S.dims.wall*1.4)/S.mpp;
+  let inside=0;
+  for(const sgn of [-1,1]){
+    const p={x:mx+nx*off*sgn,y:my+ny*off*sgn};
+    if(S.rooms.some(r=>inPoly(p,r))) inside++;
+  }
+  return inside<2;
+}
+
+/* The detector splits a wall AT its doorway, so the hole ends up between two
+   wall records rather than inside one and there is nothing left to find. Put
+   the wall back together across gaps that are opening-shaped, and remember the
+   gap as the opening. One continuous wall with a hole in it is also what the
+   model wants to build. */
+function mergeAcrossOpenings(){
+  const segs=S.walls.map(w=>{const a=node(w.a),b=node(w.b);return a&&b?{a:{...a},b:{...b},t:w.t}:null;}).filter(Boolean);
+  const minW=0.60/S.mpp, maxW=2.55/S.mpp;
+  const holes=[];
+  let merged=true, guard=0;
+  while(merged&&guard++<40){
+    merged=false;
+    outer:
+    for(let i=0;i<segs.length;i++)for(let j=i+1;j<segs.length;j++){
+      const A=segs[i], B=segs[j];
+      const la=dist(A.a,A.b), lb=dist(B.a,B.b); if(la<1||lb<1) continue;
+      const ux=(A.b.x-A.a.x)/la, uy=(A.b.y-A.a.y)/la, nx=-uy, ny=ux;
+      const bu=(B.b.x-B.a.x)/lb, bv=(B.b.y-B.a.y)/lb;
+      if(Math.abs(ux*bv-uy*bu)>0.1) continue;                       // not collinear
+      if(Math.abs((B.a.x-A.a.x)*nx+(B.a.y-A.a.y)*ny)>0.14/S.mpp) continue;
+      const t=p=>(p.x-A.a.x)*ux+(p.y-A.a.y)*uy;
+      const b0=Math.min(t(B.a),t(B.b)), b1=Math.max(t(B.a),t(B.b));
+      const gap=b0>la?b0-la:(b1<0?-b1:-1);
+      if(gap<minW||gap>maxW) continue;
+      const lo=Math.min(0,b0), hi=Math.max(la,b1);
+      const P=q=>({x:A.a.x+ux*q,y:A.a.y+uy*q});
+      const gs=b0>la?la:b1, ge=b0>la?b0:0;
+      holes.push({from:P(Math.min(gs,ge)),to:P(Math.max(gs,ge)),line:{a:P(lo),b:P(hi)}});
+      segs[i]={a:P(lo),b:P(hi),t:Math.max(A.t||0,B.t||0)};
+      segs.splice(j,1);
+      merged=true;
+      break outer;
+    }
+  }
+  /* rebuild the wall list from the merged runs */
+  S.nodes=[]; S.walls=[]; uid=1;
+  const tol=0.05/S.mpp;
+  const at=q=>{ for(const n of S.nodes) if(dist(n,q)<tol) return n.id;
+    const n={id:uid++,x:q.x,y:q.y}; S.nodes.push(n); return n.id; };
+  for(const g of segs){ const a=at(g.a), b=at(g.b); if(a!==b) S.walls.push({a,b,t:g.t,id:uid++}); }
+
+  /* attach each remembered gap to the wall it now sits in */
+  const out=[];
+  for(const h of holes){
+    const mid={x:(h.from.x+h.to.x)/2,y:(h.from.y+h.to.y)/2};
+    let bi=-1,bd=0.4/S.mpp;
+    for(let i=0;i<S.walls.length;i++){
+      const a=node(S.walls[i].a), b=node(S.walls[i].b);
+      const vx=b.x-a.x, vy=b.y-a.y, L2=vx*vx+vy*vy; if(!L2) continue;
+      const t=clamp(((mid.x-a.x)*vx+(mid.y-a.y)*vy)/L2,0,1);
+      const d=Math.hypot(mid.x-(a.x+vx*t),mid.y-(a.y+vy*t));
+      if(d<bd){ bd=d; bi=i; }
+    }
+    if(bi<0) continue;
+    const a=node(S.walls[bi].a), b=node(S.walls[bi].b), L=dist(a,b);
+    const u=clamp((((mid.x-a.x)*(b.x-a.x)+(mid.y-a.y)*(b.y-a.y))/(L*L)),.04,.96);
+    const wm=dist(h.from,h.to)*S.mpp;
+    const kind=openingKind(wm,wallIsExterior(a,b));
+    if(!kind) continue;
+    out.push({id:uid++,wall:bi,u,kind,width:wm,
+      sill:kind==='door'?0:S.dims.sill,
+      head:kind==='door'?2.10:S.dims.sill+1.20});
+  }
+  return out;
+}
+
+function detectOpenings(){
+  if(!VEC.segs||!S.mpp||!S.walls.length) return [];
+  const out=[];
+  const minW=0.60/S.mpp, maxW=2.55/S.mpp, edge=0.22/S.mpp;
+  for(let wi=0;wi<S.walls.length;wi++){
+    const w=S.walls[wi], a=node(w.a), b=node(w.b);
+    if(!a||!b) continue;
+    const L=dist(a,b); if(L<1.2/S.mpp) continue;
+    const ux=(b.x-a.x)/L, uy=(b.y-a.y)/L, nx=-uy, ny=ux;
+    const band=Math.max(S.dims.wall,(w.t||0))*0.85/S.mpp;
+
+    const gather=filledOnly=>{
+    const spans=[];
+    for(let i=0;i<VEC.segs.length;i+=5){
+      if(filledOnly&&!VEC.segs[i+4]) continue;
+      const x1=VEC.segs[i],y1=VEC.segs[i+1],x2=VEC.segs[i+2],y2=VEC.segs[i+3];
+      const sl=Math.hypot(x2-x1,y2-y1); if(sl<0.25/S.mpp) continue;
+      const sx=(x2-x1)/sl, sy=(y2-y1)/sl;
+      if(Math.abs(sx*nx+sy*ny)>0.14) continue;                 // must run with the wall
+      const o1=(x1-a.x)*nx+(y1-a.y)*ny, o2=(x2-a.x)*nx+(y2-a.y)*ny;
+      if(Math.abs(o1)>band||Math.abs(o2)>band) continue;       // must be one of its faces
+      let t1=(x1-a.x)*ux+(y1-a.y)*uy, t2=(x2-a.x)*ux+(y2-a.y)*uy;
+      if(t1>t2){ const s=t1; t1=t2; t2=s; }
+      spans.push([Math.max(0,t1),Math.min(L,t2)]);
+    }
+    spans.sort((p,q)=>p[0]-q[0]);
+    const merged=[];
+    for(const s of spans){
+      const last=merged[merged.length-1];
+      if(last&&s[0]<=last[1]+2) last[1]=Math.max(last[1],s[1]);
+      else merged.push([s[0],s[1]]);
+    }
+    return merged;
+    };
+    /* prefer the filled poché; fall back to every parallel line on a drawing
+       that hatches its walls instead of filling them */
+    let merged=gather(true);
+    const cover=m=>m.reduce((n,[x,y])=>n+(y-x),0);
+    if(cover(merged)<L*0.3) merged=gather(false);
+    if(merged.length<2) continue;
+    const ext=wallIsExterior(a,b);
+    for(let i=0;i<merged.length-1;i++){
+      const g0=merged[i][1], g1=merged[i+1][0], gw=g1-g0;
+      if(gw<minW||gw>maxW) continue;
+      if(g0<edge||g1>L-edge) continue;                          // that is a corner, not a hole
+      const u=(g0+g1)/2/L;
+      const wm=gw*S.mpp;
+      const kind=openingKind(wm,ext);
+      if(!kind) continue;
+      out.push({id:uid++,wall:wi,u:clamp(u,.04,.96),kind,
+        width:wm,
+        sill:kind==='door'?0:S.dims.sill,
+        head:kind==='door'?2.10:S.dims.sill+1.20});
+    }
+  }
+  /* one opening per place — overlapping gaps on the same wall are one hole */
+  const keep=[];
+  for(const o of out){
+    if(keep.some(k=>k.wall===o.wall&&Math.abs(k.u-o.u)*dist(node(S.walls[o.wall].a),node(S.walls[o.wall].b))*S.mpp<0.3)) continue;
+    keep.push(o);
+  }
+  return keep;
 }
 
 /* ══ what each room is ══════════════════════════════════════════════

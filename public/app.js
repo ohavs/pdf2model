@@ -16,7 +16,7 @@ const S = {
   dims:{wall:.20, ceil:2.70, door:.90, win:1.20, sill:.90},
   history:[],
   raised:false, mode:'model', cam:'orbit',
-  projectId:null, name:'Untitled plan', pdfBytes:null, pdfName:'', dirty:false
+  projectId:null, name:'תוכנית ללא שם', pdfBytes:null, pdfName:'', dirty:false
 };
 let uid = 1;
 const $ = s => document.querySelector(s);
@@ -27,7 +27,7 @@ const bodyEl=$('#body'), msg=$('#msg'), liveDim=$('#liveDim'), tally=$('#tally')
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-const fmt=m=>(m===null||!isFinite(m))?'—':(m>=1?m.toFixed(2)+' m':Math.round(m*100)+' cm');
+const fmt=m=>(m===null||!isFinite(m))?'—':(m>=1?m.toFixed(2)+' מ׳':Math.round(m*100)+' ס״מ');
 const say=t=>{msg.textContent=t;};
 const toScreen=p=>({x:p.x*S.view.z+S.view.x,y:p.y*S.view.z+S.view.y});
 const toSrc=p=>({x:(p.x-S.view.x)/S.view.z,y:(p.y-S.view.y)/S.view.z});
@@ -45,8 +45,8 @@ const Cloud = {
   async init(){
     const cfg=window.FIREBASE_CONFIG;
     if(!cfg||!cfg.apiKey||cfg.apiKey.startsWith('PASTE')){
-      $('#privacyLine').textContent='Or drop the file anywhere here. Nothing leaves your browser.';
-      setSave('Local only','');
+      $('#privacyLine').textContent='או גררו את הקובץ לכאן. שום דבר לא יוצא מהדפדפן.';
+      setSave('מקומי בלבד','');
       return;
     }
     try{
@@ -54,16 +54,16 @@ const Cloud = {
       this.db=firebase.firestore(); this.st=firebase.storage();
       const cred=await firebase.auth().signInAnonymously();
       this.uid=cred.user.uid; this.on=true;
-      $('#privacyLine').textContent='Or drop the file anywhere here. Your plans are private to this browser.';
-      setSave('Ready','');
+      $('#privacyLine').textContent='או גררו את הקובץ לכאן. התוכניות שלכם פרטיות לדפדפן הזה.';
+      setSave('מוכן','');
       listProjects();
     }catch(e){
       console.error('[cloud]',e);
-      setSave('Offline','warn');
+      setSave('לא מקוון','warn');
       /* sign-in failed, so nothing is going anywhere — say so rather than leaving
          the line that implies the plan is being stored */
-      $('#privacyLine').textContent='Or drop the file anywhere here. Nothing leaves your browser.';
-      toast('Cloud sign-in failed. You can keep working — nothing will be saved.');
+      $('#privacyLine').textContent='או גררו את הקובץ לכאן. שום דבר לא יוצא מהדפדפן.';
+      toast('ההתחברות לענן נכשלה. אפשר להמשיך לעבוד — פשוט שום דבר לא יישמר.');
     }
   },
   doc(){ return this.db.collection('projects').doc(S.projectId); },
@@ -90,7 +90,7 @@ function serialize(){
   };
 }
 function hydrate(d){
-  S.name=d.name||'Untitled plan'; S.pdfName=d.pdfName||''; S.mpp=d.mpp??null;
+  S.name=d.name||'תוכנית ללא שם'; S.pdfName=d.pdfName||''; S.mpp=d.mpp??null;
   S.dims=Object.assign(S.dims,d.dims||{});
   S.nodes=d.nodes||[]; S.walls=d.walls||[]; S.rooms=d.rooms||[]; S.openings=d.openings||[];
   uid=d.uidSeq||1000;
@@ -100,8 +100,8 @@ function hydrate(d){
     $('#'+id).value=S.dims[k];
   });
   if(S.mpp){
-    $('#scaleChip').classList.remove('unset');
-    $('#scaleVal').textContent=(1/S.mpp).toFixed(1)+' px = 1 m';
+    $('#chipScale').classList.remove('unset');
+    $('#scaleVal').textContent=(1/S.mpp).toFixed(1)+' px = 1 מ׳';
     ['#tWall','#tDoor','#tWin'].forEach(s=>$(s).disabled=false);
   }
 }
@@ -110,17 +110,17 @@ let saveT;
 function touch(){
   S.dirty=true;
   if(!Cloud.on||!S.projectId) return;
-  setSave('Unsaved','busy');
+  setSave('לא נשמר','busy');
   clearTimeout(saveT); saveT=setTimeout(save,1200);
 }
 async function save(){
   if(!Cloud.on||!S.projectId) return;
   try{
-    setSave('Saving…','busy');
+    setSave('שומר…','busy');
     await Cloud.doc().set(serialize(),{merge:true});
     S.dirty=false;
-    setSave('Saved '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),'ok');
-  }catch(e){ console.error(e); setSave('Save failed','warn'); }
+    setSave('נשמר '+new Date().toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'}),'ok');
+  }catch(e){ console.error(e); setSave('השמירה נכשלה','warn'); }
 }
 async function listProjects(){
   if(!Cloud.on) return;
@@ -133,7 +133,7 @@ async function listProjects(){
     q.forEach(d=>{
       const v=d.data(), b=document.createElement('button');
       b.className='rec';
-      b.innerHTML=`<span>${escapeHtml(v.name||'Untitled')}</span><span class="when">${when(v.updatedAt)}</span>`;
+      b.innerHTML=`<span>${escapeHtml(v.name||'ללא שם')}</span><span class="when">${when(v.updatedAt)}</span>`;
       b.onclick=()=>openProject(d.id);
       list.appendChild(b);
     });
@@ -149,16 +149,16 @@ function when(ts){
 }
 async function openProject(id){
   try{
-    say('Opening…');
+    say('פותח…');
     const doc=await Cloud.db.collection('projects').doc(id).get();
-    if(!doc.exists){ toast('That plan is gone.'); return; }
+    if(!doc.exists){ toast('התוכנית הזאת כבר לא קיימת.'); return; }
     S.projectId=id; hydrate(doc.data());
     const bytes=await Cloud.getPDF(id);
     await openBytes(bytes,S.pdfName||'plan.pdf',doc.data().pageNum||1);
     refresh(); draw();
     setSave('Saved','ok');
-    say(S.mpp?'Carry on tracing.':'Set the scale to begin.');
-  }catch(e){ console.error(e); toast('Could not open that plan.'); }
+    say(S.mpp?'אפשר להמשיך לסמן.':'קבעו קנה מידה כדי להתחיל.');
+  }catch(e){ console.error(e); toast('לא הצלחנו לפתוח את התוכנית הזאת.'); }
 }
 
 /* ══ pdf ════════════════════════════════════════════════════════════ */
@@ -172,12 +172,12 @@ $('#newBtn').onclick=()=>location.reload();
 ['dragleave','drop'].forEach(t=>planEl.addEventListener(t,e=>{e.preventDefault();$('#drop').classList.remove('over');}));
 planEl.addEventListener('drop',e=>{
   const f=[...e.dataTransfer.files].find(f=>f.type==='application/pdf');
-  if(f) loadFile(f); else if(e.dataTransfer.files.length) toast('That is not a PDF. Open a PDF plan.');
+  if(f) loadFile(f); else if(e.dataTransfer.files.length) toast('זה לא קובץ PDF. פתחו תוכנית בפורמט PDF.');
 });
 
 async function loadFile(file){
-  if(file.size>25*1024*1024){ toast('That PDF is over 25 MB. Export a lighter one from your PDF viewer.'); return; }
-  say('Reading '+file.name+'…');
+  if(file.size>25*1024*1024){ toast('הקובץ גדול מ־25 מגה. ייצאו גרסה קלה יותר מתוכנת ה־PDF שלכם.'); return; }
+  say('קורא את '+file.name+'…');
   const bytes=await file.arrayBuffer();
   S.name=file.name.replace(/\.pdf$/i,'');
   $('#pname').value=S.name;
@@ -186,15 +186,15 @@ async function loadFile(file){
   if(Cloud.on){
     try{
       S.projectId=await Cloud.createId();
-      setSave('Saving…','busy');
+      setSave('שומר…','busy');
       await Cloud.putPDF(bytes,file.name);
       await save();
-    }catch(e){ console.error(e); setSave('Save failed','warn'); toast('The plan opened, but could not be saved to the cloud.'); }
+    }catch(e){ console.error(e); setSave('השמירה נכשלה','warn'); toast('התוכנית נפתחה, אבל לא הצלחנו לשמור אותה בענן.'); }
   }
 }
 
 async function openBytes(bytes,name,page){
-  if(!window.pdfjsLib){ toast('PDF engine did not load. Check your connection and reload.'); return false; }
+  if(!window.pdfjsLib){ toast('מנוע ה־PDF לא נטען. בדקו את החיבור ורעננו את הדף.'); return false; }
   try{
     S.pdfBytes=bytes.slice(0); S.pdfName=name;
     S.doc=await pdfjsLib.getDocument({data:bytes.slice(0)}).promise;
@@ -203,14 +203,15 @@ async function openBytes(bytes,name,page){
     $('#pname').hidden=false; $('#newBtn').hidden=false;
     await renderPage(clamp(page,1,S.numPages));
     $('#empty').style.display='none';
-    $('#scaleChip').hidden=false;
+    $('#chipScale').hidden=false;
     ['#tCal','#tOpt'].forEach(s=>$(s).disabled=false);
     setTool(S.mpp?'wall':'calibrate');
+    refresh();
     return true;
   }catch(err){
     console.error(err);
-    toast('That PDF could not be opened. It may be password-protected or damaged.');
-    say('Open a PDF to begin.');
+    toast('לא הצלחנו לפתוח את הקובץ. ייתכן שהוא מוגן בסיסמה או פגום.');
+    say('פתחו קובץ PDF כדי להתחיל.');
     return false;
   }
 }
@@ -236,7 +237,7 @@ async function renderPage(n){
 $('#prevPg').onclick=()=>{ if(S.pageNum>1){renderPage(S.pageNum-1);touch();} };
 $('#nextPg').onclick=()=>{ if(S.pageNum<S.numPages){renderPage(S.pageNum+1);touch();} };
 
-$('#pname').oninput=e=>{ S.name=e.target.value||'Untitled plan'; touch(); };
+$('#pname').oninput=e=>{ S.name=e.target.value||'תוכנית ללא שם'; touch(); };
 $('#pname').onkeydown=e=>{ if(e.key==='Enter') e.target.blur(); };
 
 /* ══ vector geometry ════════════════════════════════════════════════
@@ -333,7 +334,7 @@ function vecNear(p,R){
 function vecState(){
   const el=$('#vecState'); if(!el) return;
   const n=VEC.pts?VEC.pts.length/2:0;
-  el.textContent=n?'Corners snap to the drawing':'';
+  el.textContent=n?'הפינות נצמדות לשרטוט':'';
 }
 
 /* ══ view ═══════════════════════════════════════════════════════════ */
@@ -380,11 +381,11 @@ function undo(){
 /* ══ tools ══════════════════════════════════════════════════════════ */
 const TOOLS={select:'#tSelect',calibrate:'#tCal',wall:'#tWall',door:'#tDoor',window:'#tWin'};
 const PROMPT={
-  select:'Click a wall or an opening to select it. Backspace removes it.',
-  calibrate:'Click one end of a wall you know, then the other.',
-  wall:'Click each corner. Hold Shift to place one freehand. Esc ends the run.',
-  door:'Click a wall where the door goes.',
-  window:'Click a wall where the window goes.'
+  select:'לחצו על קיר או על פתח כדי לבחור אותו. Backspace מוחק.',
+  calibrate:'לחצו על קצה אחד של קיר שאתם יודעים את אורכו, ואז על הקצה השני.',
+  wall:'לחצו פינה אחר פינה. Shift לסימון חופשי. Esc מסיים את הרצף.',
+  door:'לחצו על קיר שסימנתם כדי להוסיף שם דלת.',
+  window:'לחצו על קיר שסימנתם כדי להוסיף שם חלון.'
 };
 function setTool(t){
   if($(TOOLS[t])?.disabled) return;
@@ -403,7 +404,7 @@ $('#tClear').onclick=()=>{
   if(!S.walls.length&&!S.openings.length) return;
   pushHistory(); S.nodes=[];S.walls=[];S.rooms=[];S.openings=[];S.chain=[];S.sel=null;
   S.raised=false; clear3D(); refresh(); draw(); touch();
-  say('Tracing cleared. The scale is kept.');
+  say('הסימון נמחק. קנה המידה נשמר.');
 };
 /* enabled and actually on screen — below 820px the model instruments are removed
    with the model pane, and their shortcuts must go with them */
@@ -444,13 +445,22 @@ document.querySelectorAll('.tool[data-tip]').forEach(b=>{
 
 /* ══ snapping / hit ═════════════════════════════════════════════════ */
 const keys={shift:false,space:false};
+/* The sheet is the ground truth; nothing can be marked off it. A corner placed
+   in the surrounding mat measures nothing and produced walls floating outside
+   the drawing. */
+const onSheet=p=>p.x>=0&&p.y>=0&&p.x<=S.srcW&&p.y<=S.srcH;
+const toSheet=p=>({...p,x:clamp(p.x,0,S.srcW),y:clamp(p.y,0,S.srcH)});
+
 function snapPoint(p,anchor){
   const R=13/S.view.z;
   let best=null,bd=R;
   for(const n of S.nodes){ const d=dist(n,p); if(d<bd){bd=d;best={x:n.x,y:n.y,id:n.id,kind:'node'};} }
   if(best) return best;                                  // the user's own corners win
   if(!keys.shift){
-    const v=vecNear(p,11/S.view.z);                      // then the drawing's own
+    /* 11 screen px, but never further than 15 cm in the real building — zoomed
+       out on a 1:100 sheet that radius was reaching a quarter of a metre and
+       pulling corners onto the wrong face, which bends the run visibly. */
+    const v=vecNear(p,Math.min(11/S.view.z, S.mpp?0.15/S.mpp:Infinity));
     if(v) return v;
   }
   if(anchor&&!keys.shift){
@@ -497,15 +507,18 @@ planEl.addEventListener('pointerdown',e=>{
   if(e.button!==0) return;
   const p=toSrc(sp);
 
+  if(!onSheet(p)&&(S.tool==='calibrate'||S.tool==='wall')){
+    say('אפשר לסמן רק בתוך גיליון התוכנית.'); return;
+  }
   if(S.tool==='calibrate'){
-    const s=snapPoint(p,S.cal.a);
-    if(!S.cal.a){ S.cal.a={x:s.x,y:s.y}; say('Now click the other end.'); }
+    const s=toSheet(snapPoint(p,S.cal.a));
+    if(!S.cal.a){ S.cal.a={x:s.x,y:s.y}; say('עכשיו לחצו על הקצה השני.'); }
     else { S.cal.b={x:s.x,y:s.y}; askLength(); }
     draw(); return;
   }
   if(S.tool==='wall'){
     const anchor=S.chain.length?node(S.chain[S.chain.length-1]):null;
-    const s=snapPoint(p,anchor);
+    const s=toSheet(snapPoint(p,anchor));
     pushHistory();
     const id=addNode(s);
     if(S.chain.length){
@@ -513,15 +526,15 @@ planEl.addEventListener('pointerdown',e=>{
       if(prev!==id) S.walls.push({a:prev,b:id,id:uid++});
       if(id===S.chain[0]&&S.chain.length>2){
         S.rooms.push([...S.chain]); S.chain=[]; liveDim.textContent='';
-        say('Room closed. Trace another run, or raise it.');
-        refresh(); draw(); touch(); return;
+        say('החדר נסגר. סמנו רצף נוסף, או הרימו.');
+        refresh(); draw(); touch(); if(S.raised) build3D(); return;
       }
     }
-    S.chain.push(id); refresh(); draw(); touch(); return;
+    S.chain.push(id); refresh(); draw(); touch(); if(S.raised) build3D(); return;
   }
   if(S.tool==='door'||S.tool==='window'){
     const hit=wallAt(p);
-    if(!hit){ say('Click directly on a wall.'); return; }
+    if(!hit){ say('לחצו בדיוק על קיר שסימנתם.'); return; }
     pushHistory();
     const isDoor=S.tool==='door';
     S.openings.push({id:uid++,wall:hit.i,u:clamp(hit.t,.04,.96),kind:isDoor?'door':'window',
@@ -534,7 +547,7 @@ planEl.addEventListener('pointerdown',e=>{
     if(oi>=0){ S.sel={t:'opening',i:oi}; dragOpening=oi; pushHistory(); cv.setPointerCapture(e.pointerId); draw(); return; }
     const hit=wallAt(p);
     S.sel=hit?{t:'wall',i:hit.i}:null;
-    say(S.sel?'Selected. Backspace removes it.':PROMPT.select);
+    say(S.sel?'נבחר. Backspace מוחק.':PROMPT.select);
     draw(); return;
   }
 });
@@ -552,7 +565,7 @@ planEl.addEventListener('pointermove',e=>{
     draw(); return;
   }
   const anchor=S.tool==='wall'&&S.chain.length?node(S.chain[S.chain.length-1]):(S.tool==='calibrate'?S.cal.a:null);
-  S.snap=snapPoint(p,anchor);
+  S.snap=toSheet(snapPoint(p,anchor));
   S.hoverWall=(S.tool==='door'||S.tool==='window'||S.tool==='select')?(wallAt(p)?.i??-1):-1;
   liveDim.textContent = anchor ? (S.mpp?fmt(dist(anchor,S.snap)*S.mpp):Math.round(dist(anchor,S.snap))+' px') : '';
   draw();
@@ -601,33 +614,77 @@ function askLength(){
   pop.style.left=clamp(m.x-70,8,planEl.clientWidth-170)+'px';
   pop.style.top=clamp(m.y-72,8,planEl.clientHeight-90)+'px';
   const inp=$('#lenIn'); inp.value=''; inp.focus();
-  say('How long is that in real life?');
+  say('מה האורך האמיתי של הקו הזה?');
 }
 function hideLen(){ $('#lenPop').classList.remove('on'); }
+
+/* Metric either way — most people read a plan's dimension strings in
+   centimetres, which is how this one is printed. The choice is remembered. */
+let calUnit=localStorage.getItem('p2m.unit')==='cm'?'cm':'m';
+function setUnit(u){
+  calUnit=u; localStorage.setItem('p2m.unit',u);
+  $('#unitM').setAttribute('aria-pressed',String(u==='m'));
+  $('#unitCm').setAttribute('aria-pressed',String(u==='cm'));
+  const inp=$('#lenIn');
+  inp.step=u==='cm'?'1':'0.01';
+  inp.placeholder=u==='cm'?'420':'4.20';
+  inp.focus();
+}
+$('#unitM').onclick=()=>setUnit('m');
+$('#unitCm').onclick=()=>setUnit('cm');
+setUnit(calUnit);
+
 function applyLength(){
-  const m=parseFloat($('#lenIn').value);
-  if(!isFinite(m)||m<=0){ $('#lenIn').focus(); say('Enter a length in metres, e.g. 4.20'); return; }
+  const raw=parseFloat($('#lenIn').value);
+  const m=calUnit==='cm'?raw/100:raw;
+  if(!isFinite(m)||m<=0){
+    $('#lenIn').focus();
+    say(calUnit==='cm'?'הזינו אורך בסנטימטרים, למשל 420':'הזינו אורך במטרים, למשל 4.20');
+    return;
+  }
   const px=dist(S.cal.a,S.cal.b);
-  if(px<3){ say('That line is too short to measure from. Draw a longer one.'); return; }
+  if(px<3){ say('הקו הזה קצר מדי כדי למדוד ממנו. סמנו קו ארוך יותר.'); return; }
   S.mpp=m/px;
-  $('#scaleChip').classList.remove('unset');
-  $('#scaleVal').textContent=(1/S.mpp).toFixed(1)+' px = 1 m';
+  $('#chipScale').classList.remove('unset');
+  $('#scaleVal').textContent=(1/S.mpp).toFixed(1)+' px = 1 מ׳';
   hideLen(); S.cal={a:null,b:null};
   ['#tWall','#tDoor','#tWin'].forEach(s=>$(s).disabled=false);
   setTool('wall'); touch();
-  say('Scale locked. Now trace the walls — click each corner.');
+  say('קנה המידה נקבע. עכשיו סמנו את הקירות — לחצו פינה אחר פינה.');
   refresh();
 }
 $('#lenOk').onclick=applyLength;
 $('#lenIn').onkeydown=e=>{ if(e.key==='Enter'){e.preventDefault();applyLength();} };
 
+const NEED_WALLS=3;
+
 function refresh(){
-  const n=S.walls.length;
-  $('#tRaise').disabled=!(S.mpp&&n>=3);
+  const n=S.walls.length, ready=!!(S.mpp&&n>=NEED_WALLS);
+  $('#tRaise').disabled=!ready;
   $('#tClear').disabled=!(n||S.openings.length);
   $('#tExp').disabled=!S.raised;
-  tally.textContent=n?(n+' wall'+(n>1?'s':'')+(S.openings.length?' · '+S.openings.length+' opening'+(S.openings.length>1?'s':''):'')):'';
+  tally.textContent=n?(n+' קירות'+(S.openings.length?' · '+S.openings.length+' פתחים':'')):'';
+
+  /* The model pane is on screen from the first frame, so what is still missing
+     is readable at all times. It used to be collapsed to zero width until the
+     model already existed, which hid the one sentence explaining how to get one. */
+  const raiseNow=$('#tRaise'), stageRaise=$('#stageRaise');
+  raiseNow.classList.toggle('ready',ready&&!S.raised);
+  if(!S.raised){
+    const pct=Math.min(100,Math.round(n/NEED_WALLS*100));
+    $('#meterFill').style.width=pct+'%';
+    $('#meterCount').textContent=Math.min(n,NEED_WALLS)+' / '+NEED_WALLS;
+    $('#stageMeter').hidden=!S.mpp;
+    stageRaise.hidden=!ready;
+    $('#stageTitle').textContent=ready?'הכול מוכן':'כאן יעמוד המודל';
+    $('#stageHint').textContent=
+      !S.src   ? 'פתחו קובץ PDF כדי להתחיל.' :
+      !S.mpp   ? 'קודם קבעו קנה מידה — סמנו קיר אחד שאתם יודעים את אורכו.' :
+      ready    ? 'לחצו כדי להעמיד את הקירות. אפשר להמשיך לסמן גם אחר כך.' :
+                 'סמנו לפחות שלושה קירות. לחצו פינה אחר פינה על התוכנית.';
+  }
 }
+$('#stageRaise').onclick=raise;
 
 /* ══ 2d ═════════════════════════════════════════════════════════════ */
 function draw(){
@@ -867,7 +924,8 @@ function clear3D(){
   eye=null; orbitHome=null;
   if(shell&&scene){ scene.remove(shell); disposeTree(shell); shell=null; }
   $('#stageEmpty').style.display='';
-  bodyEl.classList.add('no3d'); bodyEl.classList.remove('wide3d');
+  $('#stageBar').hidden=true;
+  bodyEl.classList.remove('wide3d');
 }
 function disposeTree(o){
   o.traverse(c=>{ if(c.geometry)c.geometry.dispose(); });
@@ -1045,10 +1103,10 @@ function applyEnv(){
 }
 function raise(){
   if(!live('#tRaise')) return;
-  bodyEl.classList.remove('no3d');
+  $('#stageBar').hidden=false;
   build3D(); S.raised=true; raiseT=0; raising=true;
   requestAnimationFrame(resize3D); refresh();
-  say('Drag to orbit. Switch to Render when the shape is right.');
+  say('גררו כדי להסתובב. עברו לרנדור כשהצורה נכונה.');
 }
 $('#mModel').onclick=()=>setMode('model');
 $('#mRender').onclick=()=>setMode('render');
@@ -1098,7 +1156,7 @@ $('#xPng').onclick=()=>{
   const url=renderer.domElement.toDataURL('image/png');
   renderer.setPixelRatio(pr); resize3D();
   download(url,slug()+'.png');
-  toast('Image saved.');
+  toast('התמונה נשמרה.');
 };
 
 $('#xObj').onclick=()=>{
@@ -1125,14 +1183,14 @@ $('#xObj').onclick=()=>{
   });
   const body=['# pdf2model — '+S.name,'# metres, Y up','g '+slug(),...V,...N,...F].join('\n');
   download(URL.createObjectURL(new Blob([body],{type:'text/plain'})),slug()+'.obj');
-  toast('OBJ saved. Opens in SketchUp, Blender, Rhino.');
+  toast('קובץ OBJ נשמר. נפתח ב־SketchUp, ב־Blender וב־Rhino.');
 };
 
 $('#xJson').onclick=()=>{
   closePops();
   const data=JSON.stringify(serialize(),null,2);
   download(URL.createObjectURL(new Blob([data],{type:'application/json'})),slug()+'.json');
-  toast('Tracing data saved.');
+  toast('נתוני הסימון נשמרו.');
 };
 
 /* ══ boot ═══════════════════════════════════════════════════════════ */

@@ -1,0 +1,11 @@
+{
+  "name": "pdf2model-functions",
+  "description": "Server side for the photoreal render. The model API key lives here and never reaches the browser.",
+  "private": true,
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

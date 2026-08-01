@@ -15,7 +15,7 @@ const S = {
   chain:[], cursor:null, snap:null, hoverWall:-1, sel:null,
   dims:{wall:.20, ceil:2.70, door:.90, win:1.20, sill:.90},
   history:[],
-  raised:false, mode:'model', cam:'orbit',
+  raised:false, mode:'model', cam:'orbit', shotBuffers:null,
   proposal:null,
   scaleSrc:null,
   projectId:null, name:'תוכנית ללא שם', pdfBytes:null, pdfName:'', dirty:false
@@ -43,7 +43,7 @@ function toast(t){
 
 /* ══ cloud ══════════════════════════════════════════════════════════ */
 const Cloud = {
-  on:false, uid:null, db:null, st:null,
+  on:false, uid:null, db:null, st:null, fn:null,
   async init(){
     const cfg=window.FIREBASE_CONFIG;
     if(!cfg||!cfg.apiKey||cfg.apiKey.startsWith('PASTE')){
@@ -54,6 +54,7 @@ const Cloud = {
     try{
       firebase.initializeApp(cfg);
       this.db=firebase.firestore(); this.st=firebase.storage();
+      if(firebase.functions) this.fn=firebase.functions();
       const cred=await firebase.auth().signInAnonymously();
       this.uid=cred.user.uid; this.on=true;
       $('#privacyLine').textContent='או גררו את הקובץ לכאן. התוכניות שלכם פרטיות לדפדפן הזה.';
@@ -2258,6 +2259,93 @@ function setCam(c){
   }
 }
 $('#expand').onclick=()=>{ bodyEl.classList.toggle('wide3d'); requestAnimationFrame(resize3D); };
+
+/* ══ photoreal render ═══════════════════════════════════════════════
+   The geometry is measured, which is the whole advantage — the model is never
+   asked to invent a room, only to paint the one we already know. The frame goes
+   to a Cloud Function; the API key lives there and never reaches this file. */
+let shotStyle='day', shotResult=null;
+
+function capturePass(material,bg){
+  const pm=scene.overrideMaterial, pb=scene.background, pf=scene.fog, pe=scene.environment;
+  scene.overrideMaterial=material||null;
+  if(material){ scene.background=new THREE.Color(bg); scene.fog=null; scene.environment=null; }
+  renderer.render(scene,camera);
+  const url=renderer.domElement.toDataURL('image/jpeg',material?.isMeshDepthMaterial?1:.92);
+  scene.overrideMaterial=pm; scene.background=pb; scene.fog=pf; scene.environment=pe;
+  renderer.render(scene,camera);
+  return url;
+}
+/* Depth and normal passes as well as the beauty frame: a provider that can be
+   structurally conditioned should be handed the geometry directly rather than
+   asked to infer it. Gemini takes the beauty frame; the buffers are captured
+   and passed through so a ControlNet-style backend can be dropped in. */
+function captureBuffers(){
+  if(!renderer||!shell) return null;
+  const pr=renderer.getPixelRatio(), r=stage.getBoundingClientRect();
+  renderer.setPixelRatio(Math.min(2,Math.max(1,1280/Math.max(r.width,1))));
+  renderer.setSize(r.width,r.height,false);
+  const beauty=capturePass(null);
+  const depth=capturePass(new THREE.MeshDepthMaterial(),0x000000);
+  const normal=capturePass(new THREE.MeshNormalMaterial(),0x8080ff);
+  renderer.setPixelRatio(pr); resize3D();
+  return {beauty,depth,normal};
+}
+
+function openShot(){
+  if(!S.raised||!renderer){ toast('קודם הרימו את הקירות.'); return; }
+  const buf=captureBuffers(); if(!buf) return;
+  S.shotBuffers=buf; shotResult=null;
+  $('#shotBefore').src=buf.beauty;
+  $('#shotAfter').hidden=true; $('#shotWait').hidden=true;
+  $('#shotSave').disabled=true;
+  $('#shotMsg').textContent='בחרו אווירה ולחצו רנדרו.';
+  $('#shot').hidden=false;
+}
+function closeShot(){ $('#shot').hidden=true; }
+$('#shoot').onclick=openShot;
+$('#shotClose').onclick=closeShot;
+$('#shot').addEventListener('click',e=>{ if(e.target.id==='shot') closeShot(); });
+addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('#shot').hidden) closeShot(); });
+$('#shotStyles').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-s]'); if(!b) return;
+  shotStyle=b.dataset.s;
+  $('#shotStyles').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+});
+
+$('#shotGo').onclick=async()=>{
+  if(!S.shotBuffers) return;
+  if(!Cloud.on||!Cloud.fn){
+    $('#shotMsg').textContent='הרנדור רץ בשרת, וכרגע אין חיבור. בדקו את החיבור ונסו שוב.';
+    return;
+  }
+  $('#shotWait').hidden=false; $('#shotAfter').hidden=true;
+  $('#shotMsg').textContent=''; $('#shotGo').disabled=true; $('#shotSave').disabled=true;
+  try{
+    const call=Cloud.fn.httpsCallable('renderView');
+    const res=await call({beauty:S.shotBuffers.beauty,style:shotStyle,note:$('#shotNote').value||''});
+    const d=res.data||{};
+    if(!d.ok){
+      $('#shotMsg').textContent=d.message||'הרנדור לא הצליח.';
+    }else{
+      shotResult=d.image;
+      $('#shotAfter').src=d.image; $('#shotAfter').hidden=false;
+      $('#shotMsg').textContent='';
+      $('#shotSave').disabled=false;
+      if(d.limit) say('רונדר. נותרו '+(d.limit-d.used)+' רנדורים היום.');
+    }
+  }catch(e){
+    console.error('[render]',e);
+    $('#shotMsg').textContent=(e&&e.message)||'הרנדור לא הצליח.';
+  }finally{
+    $('#shotWait').hidden=true; $('#shotGo').disabled=false;
+  }
+};
+$('#shotSave').onclick=()=>{
+  if(!shotResult) return;
+  download(shotResult,slug()+'-render.png');
+  toast('התמונה נשמרה.');
+};
 
 /* ══ export ═════════════════════════════════════════════════════════ */
 function download(url,name){

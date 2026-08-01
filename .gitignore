@@ -1,0 +1,15 @@
+# Firebase CLI's local deploy cache — per-machine file mtimes and hashes.
+# It is rewritten by every `firebase deploy` and means nothing to anyone else.
+.firebase/
+
+# Never needed: this is a static site with no build step.
+node_modules/
+*.log
+
+# Local credentials must never be committed. The web config in
+# public/firebase-config.js is not one of these — it is a public identifier.
+.firebaserc.local
+serviceAccount*.json
+*-service-account.json
+.env
+.env.*

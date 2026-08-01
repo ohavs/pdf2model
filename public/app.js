@@ -727,7 +727,7 @@ function autoBuild(){
     refresh();
     return;
   }
-  S.proposal=runs.map(r=>({a:r.a,b:r.b,on:true}));
+  S.proposal=runs.map(r=>({a:r.a,b:r.b,t:r.t,on:true}));
   acceptProposal(true);
   showAutoBar(g,runs.length,S.openings.length);
   setTool('select');
@@ -777,7 +777,7 @@ function proposeWalls(){
       say(PROMPT[S.tool]);
       return;
     }
-    S.proposal=runs.map(r=>({a:r.a,b:r.b,on:true}));
+    S.proposal=runs.map(r=>({a:r.a,b:r.b,t:r.t,on:true}));
     setTool('select'); syncProposal(); draw();
     say('בדקו את ההצעה. לחיצה על קיר מוציאה או מחזירה אותו.');
   },30);
@@ -1009,7 +1009,11 @@ function acceptProposal(quiet){
   };
   for(const w of keep){
     const a=at(w.a), b=at(w.b);
-    if(a!==b) S.walls.push({a,b,id:uid++});
+    /* The detector measured this run's thickness off the drawing's own poché.
+       That measurement was being thrown away here, so a 25cm envelope and a
+       10cm partition came out of the model identically. */
+    const t=w.t>0?clamp(w.t,0.05,0.6):undefined;
+    if(a!==b) S.walls.push(t?{a,b,t,id:uid++}:{a,b,id:uid++});
   }
   S.rooms=findRooms();
   if(!S.openings.length){
@@ -1115,7 +1119,16 @@ const Hist = {
   snap(){ return JSON.stringify({n:S.nodes,w:S.walls,o:S.openings,c:S.chain}); },
   apply(str){
     const p=JSON.parse(str);
+    const was=Sel.items.slice();
     S.nodes=p.n; S.walls=p.w; S.openings=p.o; S.chain=p.c||[]; Sel.clear();
+    /* undoing a length change should not also cost you the wall you were
+       working on — keep whatever the restored state still contains */
+    for(const it of was){
+      const alive = it.t==='wall'?wallById(it.id)
+                  : it.t==='opening'?openingById(it.id)
+                  : node(it.id);
+      if(alive) Sel.add(it.t,it.id);
+    }
   },
   /* call BEFORE mutating, with what the user would call the action */
   push(label){
@@ -1154,7 +1167,7 @@ function endNudgeRun(){ nudgeRun=false; }
 function pushHistory(label){ if(label!=='הזזה') nudgeRun=false; Hist.push(label||'שינוי'); }
 function afterHistory(label,dir){
   S.rooms=findRooms();
-  refresh(); draw(); touch(); if(S.raised) build3D(); sync();
+  refresh(); draw(); touch(); if(S.raised) build3D(); sync(); renderProps();
   if(label) say((dir==='undo'?'בוטל: ':'בוצע מחדש: ')+label);
 }
 function undo(){ endNudgeRun(); const l=Hist.stepBack(); if(l!==null) afterHistory(l,'undo'); }
@@ -1174,7 +1187,7 @@ function setTool(t){
   S.tool=t; S.chain=[]; S.cal={a:null,b:null}; Sel.clear(); hideLen(); closePops(); liveDim.textContent=''; clearGuides();
   for(const k in TOOLS) $(TOOLS[k]).setAttribute('aria-pressed',String(k===t));
   planEl.classList.toggle('sel',t==='select');
-  say(PROMPT[t]); draw();
+  say(PROMPT[t]); renderProps(); draw();
 }
 $('#tSelect').onclick=()=>setTool('select');
 $('#tCal').onclick=()=>setTool('calibrate');
@@ -1534,6 +1547,277 @@ function openingAt(p){
   return null;
 }
 
+
+/* ══ properties ═════════════════════════════════════════════════════
+   Everything the selection measures, as a number you can replace. Dragging is
+   fast and typing is exact, and this is where exact lives: a wall is 3.60 m
+   because you said 3.60, not because the pointer landed there.
+
+   A field never fights the canvas. It shows what the selection is now, and it
+   only writes back when you commit — Enter, Tab or blur. */
+const propsEl=$('#props'), propsFields=$('#propsFields');
+
+/* which end of a wall a length or angle edit should move. A corner shared with
+   another wall is a joint; move the free end and the joint survives. */
+function freeEnd(w){
+  const shared=id=>S.walls.some(x=>x.id!==w.id&&(x.a===id||x.b===id));
+  const aFree=!shared(w.a), bFree=!shared(w.b);
+  if(bFree) return {fixed:w.a,move:w.b};
+  if(aFree) return {fixed:w.b,move:w.a};
+  return {fixed:w.a,move:w.b,joint:true};
+}
+function wallLength(w){ const a=node(w.a),b=node(w.b); return a&&b&&S.mpp?dist(a,b)*S.mpp:null; }
+function wallAngle(w){
+  const a=node(w.a),b=node(w.b); if(!a||!b) return null;
+  /* degrees anticlockwise from east, the way a protractor reads — the sheet's
+     y runs down, so the sign flips */
+  let d=-Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI;
+  d=((d%360)+360)%360; return +d.toFixed(2);
+}
+/* Marks are bounded by the sheet, so a typed number that would put a corner
+   off the paper has to be refused rather than quietly clamped — clamping a
+   rotation shortens the wall as well as missing the angle, and the user is
+   left looking at two numbers they did not ask for. */
+function setWallLength(w,metres){
+  const a=node(w.a),b=node(w.b); if(!a||!b||!S.mpp) return false;
+  const L=clamp(metres,0.05,200)/S.mpp;
+  const e=freeEnd(w), fix=node(e.fixed), mov=node(e.move); if(!fix||!mov) return false;
+  const u=unit(fix,mov);
+  const q={x:fix.x+u.x*L,y:fix.y+u.y*L};
+  if(!onSheet(q)) return 'off';
+  mov.x=q.x; mov.y=q.y; return true;
+}
+function setWallAngle(w,deg){
+  const e=freeEnd(w), fix=node(e.fixed), mov=node(e.move); if(!fix||!mov) return false;
+  const L=dist(fix,mov); const r=-deg*Math.PI/180;
+  const q={x:fix.x+Math.cos(r)*L,y:fix.y+Math.sin(r)*L};
+  if(!onSheet(q)) return 'off';
+  mov.x=q.x; mov.y=q.y; return true;
+}
+function openingOffset(o){
+  const w=wallById(o.wallId); if(!w||!S.mpp) return null;
+  const a=node(w.a),b=node(w.b); if(!a||!b) return null;
+  return dist(a,b)*o.u*S.mpp;
+}
+function setOpeningOffset(o,metres){
+  const w=wallById(o.wallId); if(!w||!S.mpp) return false;
+  const a=node(w.a),b=node(w.b); if(!a||!b) return false;
+  const L=dist(a,b)*S.mpp; if(L<=0) return false;
+  o.u=clamp(metres/L,.04,.96); return true;
+}
+
+/* one value across a selection: the number if they agree, null if they do not */
+function common(list,get){
+  let v=null;
+  for(const x of list){
+    const q=get(x); if(q==null) return null;
+    const r=Math.round(q*1e4)/1e4;
+    if(v===null) v=r; else if(v!==r) return null;
+  }
+  return v;
+}
+function field(id,label,unit,value,step,min,max,disabled){
+  const mixed=value===null;
+  return '<div class="f"><label for="'+id+'">'+label+'</label><span class="val">'+
+    '<input type="number" id="'+id+'" step="'+step+'" min="'+min+'" max="'+max+'"'+
+    (mixed?' placeholder="—" class="mixed" data-was=""':' value="'+value+'" data-was="'+value+'"')+
+    (disabled?' disabled':'')+'><span class="u">'+unit+'</span></span></div>';
+}
+
+let propsBusy=false;                     // do not rewrite a field the user is typing in
+function renderProps(){
+  const walls=Sel.walls(), opens=Sel.openings();
+  if(!Sel.size||S.tool!=='select'||!S.mpp){ propsEl.classList.remove('on'); return; }
+  if(propsBusy) return;
+  propsEl.classList.add('on');
+  const n=Sel.size;
+  $('#propsCount').textContent=n>1?String(n):'';
+  let html='', hint='';
+  if(walls.length&&!opens.length){
+    $('#propsTitle').textContent=walls.length>1?'קירות':'קיר';
+    const one=walls.length===1?walls[0]:null;
+    html+=field('pLen','אורך','מ׳',one?+(wallLength(one)||0).toFixed(3):null,'0.01','0.05','200',!one);
+    html+=field('pAng','זווית','°',one?wallAngle(one):null,'0.1','0','360',!one);
+    html+=field('pThk','עובי','מ׳',common(walls,w=>w.t||S.dims.wall),'0.01','0.03','1',false);
+    if(one){
+      const e=freeEnd(one);
+      hint=e.joint?'שני הקצוות מחוברים לקירות אחרים — שינוי אורך יזיז את הקצה השני ויגרור אותם.'
+                  :'שינוי אורך או זווית מזיז את הקצה החופשי.';
+    }else hint='עובי משותף לכל הקירות שנבחרו.';
+  }else if(opens.length&&!walls.length){
+    $('#propsTitle').textContent=opens.length>1?'פתחים':'פתח';
+    const one=opens.length===1?opens[0]:null;
+    const kind=common(opens,o=>o.kind==='door'?1:0);
+    html+='<div class="f"><label>סוג</label><div class="seg" id="pKind">'+
+      '<button type="button" data-kind="door" aria-pressed="'+(kind===1)+'">דלת</button>'+
+      '<button type="button" data-kind="window" aria-pressed="'+(kind===0)+'">חלון</button></div></div>';
+    html+=field('pW','רוחב','מ׳',common(opens,o=>o.width),'0.05','0.3','6',false);
+    html+=field('pOff','מרחק מהקצה','מ׳',one?+(openingOffset(one)||0).toFixed(3):null,'0.05','0','200',!one);
+    html+=field('pSill','גובה אדן','מ׳',common(opens,o=>o.sill),'0.05','0','2',false);
+    html+=field('pHead','גובה עליון','מ׳',common(opens,o=>o.head),'0.05','0.6','4',false);
+    hint='דלת יושבת על הרצפה; אדן נמדד מעליה.';
+  }else{
+    $('#propsTitle').textContent='בחירה';
+    html+=field('pThk','עובי קירות','מ׳',common(walls,w=>w.t||S.dims.wall),'0.01','0.03','1',!walls.length);
+    html+=field('pW','רוחב פתחים','מ׳',common(opens,o=>o.width),'0.05','0.3','6',!opens.length);
+    hint=Sel.describe();
+  }
+  propsFields.innerHTML=html;
+  $('#propsHint').textContent=hint;
+  wireProps();
+}
+
+/* a field commits on Enter, Tab or blur — never on every keystroke, because
+   "3" on the way to "3.6" is a wall you did not ask for */
+function wireProps(){
+  $$('#propsFields input').forEach(inp=>{
+    inp.addEventListener('focus',()=>{ propsBusy=true; });
+    inp.addEventListener('blur',()=>{ propsBusy=false; commitProp(inp); });
+    inp.addEventListener('keydown',e=>{
+      e.stopPropagation();
+      if(e.key==='Enter'){ e.preventDefault(); commitProp(inp); inp.select(); }
+      if(e.key==='Escape'){ e.preventDefault(); propsBusy=false; inp.blur(); renderProps(); }
+    });
+  });
+  const seg=$('#pKind');
+  if(seg) seg.querySelectorAll('button').forEach(b=>{
+    b.onclick=()=>{
+      const k=b.dataset.kind;
+      pushHistory('שינוי סוג פתח');
+      for(const o of Sel.openings()){
+        o.kind=k;
+        if(k==='door'){ o.sill=0; o.head=Math.max(o.head,1.8); }
+        else if(o.sill<=0) o.sill=S.dims.sill;
+      }
+      afterProp(Sel.openings().map(o=>o.wallId));
+    };
+  });
+}
+function commitProp(inp){
+  const v=parseFloat(inp.value);
+  if(!isFinite(v)) return;
+  /* the number it was rendered with — retyping it is not an edit, and without
+     this every focus-and-click-away leaves a junk step on the undo stack */
+  const was=parseFloat(inp.dataset.was);
+  if(isFinite(was)&&Math.abs(was-v)<1e-9) return;
+  inp.dataset.was=String(v);
+  const walls=Sel.walls(), opens=Sel.openings();
+  let label='', touched=[];
+  if(inp.id==='pLen'&&walls.length===1){
+    label='שינוי אורך קיר'; pushHistory(label);
+    const r=setWallLength(walls[0],v);
+    if(r!==true) { Hist.undo.pop(); sync(); refuseProp(inp,r); return; }
+    touched=S.walls.filter(w=>w.a===walls[0].a||w.b===walls[0].a||w.a===walls[0].b||w.b===walls[0].b).map(w=>w.id);
+  }else if(inp.id==='pAng'&&walls.length===1){
+    label='שינוי זווית קיר'; pushHistory(label);
+    const r=setWallAngle(walls[0],v);
+    if(r!==true) { Hist.undo.pop(); sync(); refuseProp(inp,r); return; }
+    touched=S.walls.filter(w=>w.a===walls[0].a||w.b===walls[0].a||w.a===walls[0].b||w.b===walls[0].b).map(w=>w.id);
+  }else if(inp.id==='pThk'&&walls.length){
+    label='שינוי עובי קיר'; pushHistory(label);
+    const t=clamp(v,0.03,1); for(const w of walls) w.t=t;
+    touched=walls.map(w=>w.id);
+  }else if(inp.id==='pW'&&opens.length){
+    label='שינוי רוחב פתח'; pushHistory(label);
+    for(const o of opens){
+      const w=wallById(o.wallId), a=w&&node(w.a), b=w&&node(w.b);
+      const L=a&&b?dist(a,b)*S.mpp:6;
+      o.width=clamp(v,0.3,Math.min(6,L*0.98));
+    }
+    touched=opens.map(o=>o.wallId);
+  }else if(inp.id==='pOff'&&opens.length===1){
+    label='הזזת פתח'; pushHistory(label);
+    if(!setOpeningOffset(opens[0],v)) { Hist.undo.pop(); sync(); refuseProp(inp); return; }
+    touched=[opens[0].wallId];
+  }else if(inp.id==='pSill'&&opens.length){
+    label='שינוי גובה אדן'; pushHistory(label);
+    for(const o of opens){ o.sill=clamp(v,0,2); if(o.head<o.sill+0.3) o.head=o.sill+0.3; }
+    touched=opens.map(o=>o.wallId);
+  }else if(inp.id==='pHead'&&opens.length){
+    label='שינוי גובה פתח'; pushHistory(label);
+    for(const o of opens){ o.head=clamp(v,0.6,4); if(o.sill>o.head-0.3) o.sill=Math.max(0,o.head-0.3); }
+    touched=opens.map(o=>o.wallId);
+  }else return;
+  afterProp(touched,label);
+}
+function refuseProp(inp,why){
+  say(why==='off'?'הערך הזה מוציא את הקיר אל מחוץ לגיליון. אפשר להזיז את הקצה השני קודם.'
+                 :'הערך הזה לא אפשרי כאן.');
+  propsBusy=false; renderProps();
+}
+function afterProp(touched,label){
+  const ids=[...new Set((touched||[]).filter(x=>x!=null))];
+  if(S.raised&&ids.length){ if(!syncWalls(ids)) build3D(); }
+  else if(S.raised) build3D();
+  reroom(); refresh(); draw(); touch(); sync();
+  renderProps();
+  if(label) say(label+' — בוצע. Ctrl+Z מחזיר.');
+}
+$('#propsDel').onclick=()=>deleteSelection();
+
+/* ══ typing over a drag ═════════════════════════════════════════════
+   The CAD move: start the drag so the direction is decided by the hand, then
+   type the number so the size is decided exactly. Enter commits it. */
+let typed=null;
+const typeInEl=$('#typeIn'), typeValEl=$('#typeVal'), typeUnitEl=$('#typeUnit');
+function typeTarget(){
+  if(!drag) return null;
+  if(drag.k==='openEdge') return {what:'width',unit:'מ׳',label:'רוחב פתח'};
+  if(drag.k==='end') return {what:'length',unit:'מ׳',label:'אורך קיר'};
+  return {what:'move',unit:'מ׳',label:'מרחק'};
+}
+function showTyped(){
+  const t=typeTarget(); if(!t||typed===null){ typeInEl.classList.remove('on'); return; }
+  typeValEl.textContent=typed===''?'0':typed;
+  typeUnitEl.textContent=t.unit;
+  const p=toScreen(S.snap||S.cursor||{x:0,y:0});
+  typeInEl.style.insetInlineEnd='';
+  typeInEl.style.left=clamp(p.x+16,8,planEl.clientWidth-110)+'px';
+  typeInEl.style.top=clamp(p.y-38,8,planEl.clientHeight-44)+'px';
+  typeInEl.classList.add('on');
+}
+function applyTyped(){
+  const t=typeTarget(), v=parseFloat(typed);
+  if(!t||!isFinite(v)||!S.mpp){ cancelTyped(); return; }
+  if(t.what==='width'){
+    const o=openingById(drag.open);
+    if(o){ const w=wallById(o.wallId), a=w&&node(w.a), b=w&&node(w.b);
+      const L=a&&b?dist(a,b)*S.mpp:6;
+      o.width=clamp(v,0.3,Math.min(6,L*0.98)); }
+  }else if(t.what==='length'){
+    const w=wallById(drag.wall);
+    if(w){
+      /* the hand already chose the direction; the number chooses the distance */
+      const fix=node(w.a===drag.nodeId?w.b:w.a), mov=node(drag.nodeId);
+      if(fix&&mov){
+        const u=unit(fix,mov);
+        const q=toSheet({x:fix.x+u.x*(v/S.mpp),y:fix.y+u.y*(v/S.mpp)});
+        mov.x=q.x; mov.y=q.y;
+      }
+    }
+  }else{
+    const w=wallById(drag.wall);
+    if(w&&drag.start){
+      const a=node(w.a), b=node(w.b);
+      const u=unit(drag.start,S.cursor||drag.start);
+      const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+      const q={x:drag.start.x+u.x*(v/S.mpp),y:drag.start.y+u.y*(v/S.mpp)};
+      const dx=q.x-mid.x, dy=q.y-mid.y;
+      a.x+=dx;a.y+=dy;b.x+=dx;b.y+=dy;
+    }
+  }
+  drag.moved=true;
+  const ids=drag.k==='openEdge'?[openingById(drag.open)?.wallId]
+    :S.walls.filter(w=>w.a===drag.nodeId||w.b===drag.nodeId||w.id===drag.wall).map(w=>w.id);
+  if(S.raised) syncWalls(ids.filter(Boolean));
+  cancelTyped();
+  const d=drag; drag=null;
+  touch(); reroom(); refresh(); sync(); clearGuides();
+  liveDim.textContent=''; draw();
+  say(t.label+' נקבע ל־'+fmt(v)+'.');
+}
+function cancelTyped(){ typed=null; typeInEl.classList.remove('on'); }
+
 /* ══ pointer ════════════════════════════════════════════════════════ */
 let panning=false, panStart=null, dragOpening=null, liveSync=0;
 let drag=null, marquee=null;
@@ -1541,6 +1825,7 @@ let drag=null, marquee=null;
 function sayPick(){
   const d=Sel.describe();
   say(d?('נבחרו '+d+'. Backspace מוחק, החצים מזיזים.'):PROMPT.select);
+  renderProps();
 }
 
 /* Dragging a handle. An endpoint takes every wall that shares that corner with
@@ -1589,7 +1874,10 @@ function dragReadout(){
 }
 
 planEl.addEventListener('pointerdown',e=>{
-  if(!S.src||e.target.closest('#lenPop,#zoom,#stageBar,#propBar,#autoBar')) return;
+  /* Everything that floats over the sheet has to be excluded here, or a click
+     into it reaches the canvas underneath and clears the very selection the
+     panel is describing. */
+  if(!S.src||e.target.closest('#lenPop,#zoom,#stageBar,#propBar,#autoBar,#props,#typeIn')) return;
   closePops();
   const r=planEl.getBoundingClientRect(), sp={x:e.clientX-r.left,y:e.clientY-r.top};
   if(e.button===1||keys.space){ panning=true;panStart={...sp,vx:S.view.x,vy:S.view.y};planEl.classList.add('panning');cv.setPointerCapture(e.pointerId);return; }
@@ -1729,7 +2017,7 @@ addEventListener('pointerup',()=>{
     const d=drag; drag=null;
     if(!d.moved) Hist.undo.pop();        // a click that moved nothing is not an edit
     else { touch(); reroom(); }
-    sync(); liveDim.textContent=''; clearGuides(); draw(); return;
+    sync(); liveDim.textContent=''; clearGuides(); cancelTyped(); renderProps(); draw(); return;
   }
   if(panning){panning=false;planEl.classList.remove('panning');}
   if(dragOpening){
@@ -1744,6 +2032,16 @@ planEl.addEventListener('contextmenu',e=>{ if(S.tool==='wall'){e.preventDefault(
 
 addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'){ if(e.key==='Escape') e.target.blur(); return; }
+  /* Mid-drag, digits are a measurement, not a shortcut. The hand has already
+     chosen the direction; the keyboard chooses the size. */
+  if(drag&&/^[0-9.]$/.test(e.key)){
+    e.preventDefault(); typed=(typed||'')+e.key; showTyped(); return;
+  }
+  if(drag&&typed!==null){
+    if(e.key==='Backspace'){ e.preventDefault(); typed=typed.slice(0,-1); showTyped(); return; }
+    if(e.key==='Enter'){ e.preventDefault(); applyTyped(); return; }
+    if(e.key==='Escape'){ e.preventDefault(); cancelTyped(); draw(); return; }
+  }
   if(e.key==='Shift') keys.shift=true;
   if(e.key==='Alt'){ keys.alt=true; e.preventDefault(); }
   if(e.code==='Space'){ keys.space=true; e.preventDefault(); }
@@ -1762,21 +2060,25 @@ addEventListener('keydown',e=>{
   if(k==='m'&&live('#tSnap')) togglePop('#snapPop',$('#tSnap'));
   /* a measurement with nothing anchoring it is not a measurement */
   if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};Sel.clear();liveDim.textContent='';clearGuides();hideLen();closePops();
+    cancelTyped(); renderProps();
     if(S.proposal) cancelProposal(); else draw(); }
   if(k==='backspace'||k==='delete'){
-    if(!Sel.size) return; e.preventDefault();
-    const wIds=new Set(Sel.walls().map(w=>w.id)), oIds=new Set(Sel.openings().map(o=>o.id));
-    pushHistory(deleteLabel(wIds.size,oIds.size));
-    S.openings=S.openings.filter(o=>!oIds.has(o.id)&&!wIds.has(o.wallId));
-    S.walls=S.walls.filter(w=>!wIds.has(w.id));
-    Sel.clear(); refresh(); draw(); touch();
-    if(S.raised&&!syncWalls()) build3D();
-    reroom(); sync();
-    say((wIds.size||oIds.size)?'נמחק. Ctrl+Z מחזיר.':PROMPT.select);
+    if(!Sel.size) return; e.preventDefault(); deleteSelection();
   }
   if(e.key.startsWith('Arrow')&&Sel.size&&S.tool==='select'){ e.preventDefault(); nudge(e); }
 });
 
+function deleteSelection(){
+  if(!Sel.size) return;
+  const wIds=new Set(Sel.walls().map(w=>w.id)), oIds=new Set(Sel.openings().map(o=>o.id));
+  pushHistory(deleteLabel(wIds.size,oIds.size));
+  S.openings=S.openings.filter(o=>!oIds.has(o.id)&&!wIds.has(o.wallId));
+  S.walls=S.walls.filter(w=>!wIds.has(w.id));
+  Sel.clear(); refresh(); draw(); touch();
+  if(S.raised&&!syncWalls()) build3D();
+  reroom(); sync(); renderProps();
+  say('נמחק. Ctrl+Z מחזיר.');
+}
 function deleteLabel(w,o){
   if(w&&o) return 'מחיקת '+(w+o)+' פריטים';
   if(w) return w>1?('מחיקת '+w+' קירות'):'מחיקת קיר';
@@ -1814,7 +2116,7 @@ function nudge(e){
   const touched=[...new Set([...Sel.walls().map(w=>w.id),...Sel.openings().map(o=>o.wallId),
     ...S.walls.filter(w=>ids.has(w.a)||ids.has(w.b)).map(w=>w.id)])];
   if(S.raised) syncWalls(touched);
-  refresh(); draw(); touch(); reroom(); sync();
+  refresh(); draw(); touch(); reroom(); sync(); renderProps();
   const d=Sel.walls()[0];
   if(d){ const a=node(d.a), b=node(d.b);
     if(a&&b&&S.mpp) liveDim.textContent=fmt(dist(a,b)*S.mpp); }
@@ -2000,6 +2302,7 @@ function drawRooms(){
   }
   ctx.restore();
 }
+const wallThick=w=>(w&&w.t>0?w.t:S.dims.wall);
 function drawWalls(){
   const tPx=S.mpp?(S.dims.wall/S.mpp)*S.view.z:6;
   S.walls.forEach((w,i)=>{
@@ -2008,7 +2311,7 @@ function drawWalls(){
     const on=Sel.has('wall',w.id), hov=S.hoverWall===w.id;
     ctx.save(); ctx.lineCap='butt';
     ctx.strokeStyle=on?'#E8B923':(hov?'#4A453D':'#23211E');
-    ctx.lineWidth=Math.max(2.5,tPx);
+    ctx.lineWidth=Math.max(2.5,S.mpp?(wallThick(w)/S.mpp)*S.view.z:6);
     ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
     ctx.restore();
   });
@@ -2046,12 +2349,12 @@ function drawWalls(){
   });
 }
 function drawOpenings(){
-  const tPx=S.mpp?(S.dims.wall/S.mpp)*S.view.z:6;
   S.openings.forEach((o,i)=>{
     const w=wallById(o.wallId); if(!w) return;
     const a=node(w.a), b=node(w.b); if(!a||!b) return;
     const A=toScreen(a), B=toScreen(b);
     const ang=Math.atan2(B.y-A.y,B.x-A.x);
+    const tPx=S.mpp?(wallThick(w)/S.mpp)*S.view.z:6;
     const wPx=S.mpp?(o.width/S.mpp)*S.view.z:16, th=Math.max(3,tPx);
     const on=Sel.has('opening',o.id);
     ctx.save();
@@ -2742,9 +3045,12 @@ function buildWall(w,parent){
   const ops=S.openings.filter(o=>o.wallId===w.id)
     .map(o=>({s:clamp(o.u*L-o.width/2,0,L),e:clamp(o.u*L+o.width/2,0,L),o}))
     .sort((p,q)=>p.s-q.s);
+  /* the wall's own thickness when the drawing gave it one, so an exterior
+     envelope does not come out the same as an interior partition */
+  const TW=w.t>0?clamp(w.t,.03,1):T;
   const box=(len,hgt,y0,x0,mat)=>{
     if(len<=.004||hgt<=.004) return;
-    const mesh=new THREE.Mesh(new THREE.BoxGeometry(len,hgt,T),mat);
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(len,hgt,TW),mat);
     mesh.position.set(x0-L/2+len/2,y0+hgt/2,0);
     mesh.castShadow=true; mesh.receiveShadow=true;
     mesh.userData={h:hgt,y0:y0+hgt/2};
@@ -2757,7 +3063,7 @@ function buildWall(w,parent){
     if(o.sill>.004) box(e0-s0,o.sill,0,s0,matW);
     if(head<H-.004) box(e0-s0,H-head,head,s0,matW);
     if(o.kind==='window'&&!modelMode){
-      const gl=new THREE.Mesh(new THREE.BoxGeometry(e0-s0,head-o.sill,T*.16),MAT.glass);
+      const gl=new THREE.Mesh(new THREE.BoxGeometry(e0-s0,head-o.sill,TW*.16),MAT.glass);
       gl.position.set(s0-L/2+(e0-s0)/2,o.sill+(head-o.sill)/2,0);
       gl.userData={h:head-o.sill,y0:o.sill+(head-o.sill)/2};
       g.add(gl);

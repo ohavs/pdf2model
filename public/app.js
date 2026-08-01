@@ -14,7 +14,6 @@ const S = {
   nodes:[], walls:[], rooms:[], openings:[],
   chain:[], cursor:null, snap:null, hoverWall:-1, sel:null,
   dims:{wall:.20, ceil:2.70, door:.90, win:1.20, sill:.90},
-  history:[],
   raised:false, mode:'model', cam:'orbit',
   proposal:null,
   scaleSrc:null,
@@ -34,6 +33,12 @@ const say=t=>{msg.textContent=t;};
 const toScreen=p=>({x:p.x*S.view.z+S.view.x,y:p.y*S.view.z+S.view.y});
 const toSrc=p=>({x:(p.x-S.view.x)/S.view.z,y:(p.y-S.view.y)/S.view.z});
 const node=id=>S.nodes.find(n=>n.id===id);
+/* Identity, not position. Openings used to point at a wall by its index in the
+   array, so deleting one wall renumbered every opening after it and any code
+   holding an index was quietly pointing at the wrong thing. Everything is
+   addressed by id now; an index is only ever a loop variable. */
+const wallById=id=>S.walls.find(w=>w.id===id);
+const openingById=id=>S.openings.find(o=>o.id===id);
 
 let toastT;
 function toast(t){
@@ -115,6 +120,12 @@ function hydrate(d){
   S.name=d.name||'תוכנית ללא שם'; S.pdfName=d.pdfName||''; S.mpp=d.mpp??null;
   S.dims=Object.assign(S.dims,d.dims||{});
   S.nodes=d.nodes||[]; S.walls=d.walls||[]; S.openings=d.openings||[];
+  /* plans saved before openings carried a wall id still point by index */
+  S.openings=S.openings.map(o=>{
+    if(o.wallId!=null) return o;
+    const w=S.walls[o.wall];
+    return w?{...o,wallId:w.id,wall:undefined}:null;
+  }).filter(Boolean);
   /* rooms are derived, never stored — recompute them from the walls */
   S.rooms=[];
   uid=d.uidSeq||1000;
@@ -722,7 +733,7 @@ $('#autoManual').onclick=()=>{
   S.mpp=null; S.scaleSrc=null;
   $('#chipScale').classList.add('unset');
   $('#scaleVal').textContent='לא נקבע';
-  pushHistory();
+  pushHistory('חזרה לכיול ידני');
   S.nodes=[];S.walls=[];S.rooms=[];S.openings=[];S.chain=[];S.sel=null;S.proposal=null;
   S.raised=false; clear3D(); syncProposal();
   ['#tWall','#tDoor','#tWin','#tAuto'].forEach(x=>$(x).disabled=true);
@@ -970,7 +981,7 @@ function acceptProposal(quiet){
   const p=S.proposal; if(!p) return;
   const keep=p.filter(w=>w.on);
   if(!keep.length) return;
-  pushHistory();
+  pushHistory('קבלת הקירות שזוהו');
   /* one node per corner, so the accepted runs share endpoints and can close rooms */
   const tol=0.05/S.mpp;
   const at=q=>{
@@ -988,7 +999,7 @@ function acceptProposal(quiet){
     const b=detectOpenings();
     const seen=new Set();
     S.openings=[...a,...b].filter(o=>{
-      const k=o.wall+':'+Math.round(o.u*40); if(seen.has(k)) return false; seen.add(k); return true;
+      const k=o.wallId+':'+Math.round(o.u*40); if(seen.has(k)) return false; seen.add(k); return true;
     });
   }
   reroom();
@@ -1074,19 +1085,56 @@ planEl.addEventListener('wheel',e=>{
   zoomAt(e.deltaY<0?1.1:1/1.1,e.clientX-r.left,e.clientY-r.top);
 },{passive:false});
 
-/* ══ history ════════════════════════════════════════════════════════ */
-function pushHistory(){
-  S.history.push(JSON.stringify({n:S.nodes,w:S.walls,r:S.rooms,o:S.openings,c:S.chain}));
-  if(S.history.length>60) S.history.shift();
-  $('#tUndo').disabled=false;
+/* ══ history ════════════════════════════════════════════════════════
+   Every edit is a command with a name, so undo can say what it is undoing and
+   redo exists at all. The state it captures is still a snapshot of the geometry
+   — cheap at this size, and it cannot drift out of step with a hand-written
+   inverse the way a delta can. What changed is the shape of the stack: two of
+   them, each entry labelled, and a redo that survives until the next edit. */
+const Hist = {
+  undo:[], redo:[], max:120,
+  snap(){ return JSON.stringify({n:S.nodes,w:S.walls,o:S.openings,c:S.chain}); },
+  apply(str){
+    const p=JSON.parse(str);
+    S.nodes=p.n; S.walls=p.w; S.openings=p.o; S.chain=p.c||[]; S.sel=null;
+  },
+  /* call BEFORE mutating, with what the user would call the action */
+  push(label){
+    this.undo.push({label,state:this.snap()});
+    if(this.undo.length>this.max) this.undo.shift();
+    this.redo.length=0;
+    sync();
+  },
+  canUndo(){ return this.undo.length>0; },
+  canRedo(){ return this.redo.length>0; },
+  stepBack(){
+    const e=this.undo.pop(); if(!e) return null;
+    this.redo.push({label:e.label,state:this.snap()});
+    this.apply(e.state);
+    return e.label;
+  },
+  stepFwd(){
+    const e=this.redo.pop(); if(!e) return null;
+    this.undo.push({label:e.label,state:this.snap()});
+    this.apply(e.state);
+    return e.label;
+  },
+};
+function sync(){
+  const u=$('#tUndo'), r=$('#tRedo');
+  if(u){ u.disabled=!Hist.canUndo();
+    u.dataset.tip=Hist.canUndo()?('ביטול '+Hist.undo[Hist.undo.length-1].label):'ביטול'; }
+  if(r){ r.disabled=!Hist.canRedo();
+    r.dataset.tip=Hist.canRedo()?('ביצוע מחדש '+Hist.redo[Hist.redo.length-1].label):'ביצוע מחדש'; }
 }
-function undo(){
-  if(!S.history.length) return;
-  const p=JSON.parse(S.history.pop());
-  S.nodes=p.n; S.walls=p.w; S.rooms=p.r; S.openings=p.o; S.chain=p.c; S.sel=null;
-  if(!S.history.length) $('#tUndo').disabled=true;
-  refresh(); draw(); touch(); reroom();
+function pushHistory(label){ Hist.push(label||'שינוי'); }
+function afterHistory(label,dir){
+  S.rooms=findRooms();
+  refresh(); draw(); touch(); if(S.raised) build3D(); sync();
+  if(label) say((dir==='undo'?'בוטל: ':'בוצע מחדש: ')+label);
 }
+function undo(){ const l=Hist.stepBack(); if(l!==null) afterHistory(l,'undo'); }
+function redo(){ const l=Hist.stepFwd(); if(l!==null) afterHistory(l,'redo'); }
 
 /* ══ tools ══════════════════════════════════════════════════════════ */
 const TOOLS={select:'#tSelect',calibrate:'#tCal',wall:'#tWall',door:'#tDoor',window:'#tWin'};
@@ -1110,9 +1158,10 @@ $('#tWall').onclick=()=>setTool('wall');
 $('#tDoor').onclick=()=>setTool('door');
 $('#tWin').onclick=()=>setTool('window');
 $('#tUndo').onclick=undo;
+$('#tRedo').onclick=redo;
 $('#tClear').onclick=()=>{
   if(!S.walls.length&&!S.openings.length) return;
-  pushHistory(); S.nodes=[];S.walls=[];S.rooms=[];S.openings=[];S.chain=[];S.sel=null;
+  pushHistory('ניקוי הסימון'); S.nodes=[];S.walls=[];S.rooms=[];S.openings=[];S.chain=[];S.sel=null;
   S.proposal=null; syncProposal();
   S.raised=false; clear3D(); refresh(); draw(); touch();
   say('הסימון נמחק. קנה המידה נשמר.');
@@ -1193,22 +1242,22 @@ function wallAt(p){
     const w=S.walls[i], a=node(w.a), b=node(w.b); if(!a||!b) continue;
     const vx=b.x-a.x, vy=b.y-a.y, L2=vx*vx+vy*vy; if(!L2) continue;
     const t=clamp(((p.x-a.x)*vx+(p.y-a.y)*vy)/L2,0,1);
-    if(Math.hypot(p.x-(a.x+vx*t),p.y-(a.y+vy*t))<R) return {i,t};
+    if(Math.hypot(p.x-(a.x+vx*t),p.y-(a.y+vy*t))<R) return {wall:w,t};
   }
   return null;
 }
 function openingAt(p){
   const R=11/S.view.z;
   for(let i=S.openings.length-1;i>=0;i--){
-    const o=S.openings[i], w=S.walls[o.wall]; if(!w) continue;
+    const o=S.openings[i], w=wallById(o.wallId); if(!w) continue;
     const a=node(w.a), b=node(w.b); if(!a||!b) continue;
-    if(dist({x:a.x+(b.x-a.x)*o.u,y:a.y+(b.y-a.y)*o.u},p)<R) return i;
+    if(dist({x:a.x+(b.x-a.x)*o.u,y:a.y+(b.y-a.y)*o.u},p)<R) return o;
   }
-  return -1;
+  return null;
 }
 
 /* ══ pointer ════════════════════════════════════════════════════════ */
-let panning=false, panStart=null, dragOpening=-1;
+let panning=false, panStart=null, dragOpening=null, liveSync=0;
 
 planEl.addEventListener('pointerdown',e=>{
   if(!S.src||e.target.closest('#lenPop,#zoom,#stageBar,#propBar,#autoBar')) return;
@@ -1230,7 +1279,7 @@ planEl.addEventListener('pointerdown',e=>{
   if(S.tool==='wall'){
     const anchor=S.chain.length?node(S.chain[S.chain.length-1]):null;
     const s=toSheet(snapPoint(p,anchor));
-    pushHistory();
+    pushHistory('סימון קיר');
     const id=addNode(s);
     if(S.chain.length){
       const prev=S.chain[S.chain.length-1];
@@ -1241,14 +1290,16 @@ planEl.addEventListener('pointerdown',e=>{
         refresh(); draw(); touch(); if(S.raised) build3D(); return;
       }
     }
-    S.chain.push(id); refresh(); draw(); touch(); reroom(); return;
+    S.chain.push(id); refresh(); draw(); touch();
+    if(S.raised&&!syncWalls()) build3D();
+    reroom(); return;
   }
   if(S.tool==='door'||S.tool==='window'){
     const hit=wallAt(p);
     if(!hit){ say('לחצו בדיוק על קיר שסימנתם.'); return; }
-    pushHistory();
+    pushHistory(S.tool==='door'?'הוספת דלת':'הוספת חלון');
     const isDoor=S.tool==='door';
-    S.openings.push({id:uid++,wall:hit.i,u:clamp(hit.t,.04,.96),kind:isDoor?'door':'window',
+    S.openings.push({id:uid++,wallId:hit.wall.id,u:clamp(hit.t,.04,.96),kind:isDoor?'door':'window',
       width:isDoor?S.dims.door:S.dims.win, sill:isDoor?0:S.dims.sill,
       head:isDoor?2.10:S.dims.sill+1.20});
     refresh(); draw(); touch(); if(S.raised) build3D(); return;
@@ -1261,10 +1312,10 @@ planEl.addEventListener('pointerdown',e=>{
       say(w.on?'הקיר חזר להצעה.':'הקיר הוצא מההצעה. לחצו שוב כדי להחזיר.');
       return;
     }
-    const oi=openingAt(p);
-    if(oi>=0){ S.sel={t:'opening',i:oi}; dragOpening=oi; pushHistory(); cv.setPointerCapture(e.pointerId); draw(); return; }
+    const op=openingAt(p);
+    if(op){ S.sel={t:'opening',id:op.id}; dragOpening=op.id; pushHistory('הזזת פתח'); cv.setPointerCapture(e.pointerId); draw(); return; }
     const hit=wallAt(p);
-    S.sel=hit?{t:'wall',i:hit.i}:null;
+    S.sel=hit?{t:'wall',id:hit.wall.id}:null;
     say(S.sel?'נבחר. Backspace מוחק.':PROMPT.select);
     draw(); return;
   }
@@ -1276,22 +1327,27 @@ planEl.addEventListener('pointermove',e=>{
   if(panning){ S.view.x=panStart.vx+(sp.x-panStart.x); S.view.y=panStart.vy+(sp.y-panStart.y); draw(); return; }
   const p=toSrc(sp); S.cursor=p;
 
-  if(dragOpening>=0){
-    const o=S.openings[dragOpening], w=S.walls[o.wall], a=node(w.a), b=node(w.b);
+  if(dragOpening!=null){
+    const o=openingById(dragOpening); const w=o&&wallById(o.wallId);
+    if(!o||!w){ dragOpening=null; return; }
+    const a=node(w.a), b=node(w.b); if(!a||!b) return;
     const vx=b.x-a.x, vy=b.y-a.y, L2=vx*vx+vy*vy;
     o.u=clamp(((p.x-a.x)*vx+(p.y-a.y)*vy)/L2,.04,.96);
-    draw(); return;
+    draw();
+    if(S.raised&&!liveSync){ liveSync=requestAnimationFrame(()=>{ liveSync=0; syncWalls([o.wallId]); }); }
+    return;
   }
   const anchor=S.tool==='wall'&&S.chain.length?node(S.chain[S.chain.length-1]):(S.tool==='calibrate'?S.cal.a:null);
   S.snap=toSheet(snapPoint(p,anchor));
-  S.hoverWall=(S.tool==='door'||S.tool==='window'||S.tool==='select')?(wallAt(p)?.i??-1):-1;
+  S.hoverWall=(S.tool==='door'||S.tool==='window'||S.tool==='select')?(wallAt(p)?.wall.id??null):null;
   liveDim.textContent = anchor ? (S.mpp?fmt(dist(anchor,S.snap)*S.mpp):Math.round(dist(anchor,S.snap))+' px') : '';
   draw();
 });
 
 addEventListener('pointerup',()=>{
   if(panning){panning=false;planEl.classList.remove('panning');}
-  if(dragOpening>=0){ dragOpening=-1; touch(); if(S.raised) build3D(); }
+  if(dragOpening!=null){ const o=openingById(dragOpening); dragOpening=null; touch();
+    if(S.raised&&o) syncWalls([o.wallId]); }
 });
 planEl.addEventListener('dblclick',()=>{ if(S.tool==='wall'){S.chain=[];draw();} });
 planEl.addEventListener('contextmenu',e=>{ if(S.tool==='wall'){e.preventDefault();S.chain=[];draw();} });
@@ -1300,7 +1356,8 @@ addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'){ if(e.key==='Escape') e.target.blur(); return; }
   if(e.key==='Shift') keys.shift=true;
   if(e.code==='Space'){ keys.space=true; e.preventDefault(); }
-  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); undo(); return; }
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); save(); return; }
   const k=e.key.toLowerCase();
   if(k==='v') setTool('select');
@@ -1315,13 +1372,15 @@ addEventListener('keydown',e=>{
   if(k==='escape'){ S.chain=[];S.cal={a:null,b:null};S.sel=null;liveDim.textContent='';hideLen();closePops();
     if(S.proposal) cancelProposal(); else draw(); }
   if(k==='backspace'||k==='delete'){
-    if(!S.sel) return; e.preventDefault(); pushHistory();
-    if(S.sel.t==='opening') S.openings.splice(S.sel.i,1);
+    if(!S.sel) return; e.preventDefault(); pushHistory(S.sel.t==='opening'?'מחיקת פתח':'מחיקת קיר');
+    if(S.sel.t==='opening') S.openings=S.openings.filter(o=>o.id!==S.sel.id);
     else{
-      S.openings=S.openings.filter(o=>o.wall!==S.sel.i).map(o=>({...o,wall:o.wall>S.sel.i?o.wall-1:o.wall}));
-      S.walls.splice(S.sel.i,1);
+      S.openings=S.openings.filter(o=>o.wallId!==S.sel.id);
+      S.walls=S.walls.filter(w=>w.id!==S.sel.id);
     }
-    S.sel=null; refresh(); draw(); touch(); reroom();
+    S.sel=null; refresh(); draw(); touch();
+    if(S.raised&&!syncWalls()) build3D();
+    reroom();
   }
 });
 addEventListener('keyup',e=>{ if(e.key==='Shift')keys.shift=false; if(e.code==='Space')keys.space=false; });
@@ -1382,8 +1441,12 @@ const NEED_WALLS=3;
 
 let reroomT;
 function reroom(){ clearTimeout(reroomT); reroomT=setTimeout(()=>{
-  S.rooms=findRooms(); draw(); if(S.raised) build3D();
-},60); }
+  const before=S.rooms.length;
+  S.rooms=findRooms(); draw();
+  /* floors and furniture follow the rooms, so a change there is the one case
+     that still needs the full build */
+  if(S.raised&&(before!==S.rooms.length||before>0)) build3D();
+},90); }
 
 function refresh(){
   const n=S.walls.length, ready=!!(S.mpp&&n>=NEED_WALLS);
@@ -1461,7 +1524,7 @@ function drawWalls(){
   S.walls.forEach((w,i)=>{
     const a=node(w.a), b=node(w.b); if(!a||!b) return;
     const A=toScreen(a), B=toScreen(b);
-    const on=S.sel?.t==='wall'&&S.sel.i===i, hov=S.hoverWall===i;
+    const on=S.sel?.t==='wall'&&S.sel.id===w.id, hov=S.hoverWall===w.id;
     ctx.save(); ctx.lineCap='butt';
     ctx.strokeStyle=on?'#E8B923':(hov?'#4A453D':'#23211E');
     ctx.lineWidth=Math.max(2.5,tPx);
@@ -1483,7 +1546,7 @@ function drawWalls(){
   S.walls.forEach((w,i)=>{
     const a=node(w.a), b=node(w.b); if(!a||!b) return;
     const A=toScreen(a), B=toScreen(b);
-    const on=S.sel?.t==='wall'&&S.sel.i===i;
+    const on=S.sel?.t==='wall'&&S.sel.id===w.id;
     const txt=fmt(dist(a,b)*S.mpp);
     let ang=Math.atan2(B.y-A.y,B.x-A.x);
     if(ang>Math.PI/2||ang<-Math.PI/2) ang+=Math.PI;
@@ -1500,12 +1563,12 @@ function drawWalls(){
 function drawOpenings(){
   const tPx=S.mpp?(S.dims.wall/S.mpp)*S.view.z:6;
   S.openings.forEach((o,i)=>{
-    const w=S.walls[o.wall]; if(!w) return;
+    const w=wallById(o.wallId); if(!w) return;
     const a=node(w.a), b=node(w.b); if(!a||!b) return;
     const A=toScreen(a), B=toScreen(b);
     const ang=Math.atan2(B.y-A.y,B.x-A.x);
     const wPx=S.mpp?(o.width/S.mpp)*S.view.z:16, th=Math.max(3,tPx);
-    const on=S.sel?.t==='opening'&&S.sel.i===i;
+    const on=S.sel?.t==='opening'&&S.sel.id===o.id;
     ctx.save();
     ctx.translate(A.x+(B.x-A.x)*o.u, A.y+(B.y-A.y)*o.u); ctx.rotate(ang);
     ctx.fillStyle='#FFFFFF'; ctx.fillRect(-wPx/2,-th/2,wPx,th);
@@ -1805,7 +1868,7 @@ function mergeAcrossOpenings(){
     const wm=dist(h.from,h.to)*S.mpp;
     const kind=openingKind(wm,wallIsExterior(a,b));
     if(!kind) continue;
-    out.push({id:uid++,wall:bi,u,kind,width:wm,
+    out.push({id:uid++,wallId:S.walls[bi].id,u,kind,width:wm,
       sill:kind==='door'?0:S.dims.sill,
       head:kind==='door'?2.10:S.dims.sill+1.20});
   }
@@ -1861,7 +1924,7 @@ function detectOpenings(){
       const wm=gw*S.mpp;
       const kind=openingKind(wm,ext);
       if(!kind) continue;
-      out.push({id:uid++,wall:wi,u:clamp(u,.04,.96),kind,
+      out.push({id:uid++,wallId:w.id,u:clamp(u,.04,.96),kind,
         width:wm,
         sill:kind==='door'?0:S.dims.sill,
         head:kind==='door'?2.10:S.dims.sill+1.20});
@@ -1870,7 +1933,9 @@ function detectOpenings(){
   /* one opening per place — overlapping gaps on the same wall are one hole */
   const keep=[];
   for(const o of out){
-    if(keep.some(k=>k.wall===o.wall&&Math.abs(k.u-o.u)*dist(node(S.walls[o.wall].a),node(S.walls[o.wall].b))*S.mpp<0.3)) continue;
+    const ow=wallById(o.wallId);
+    if(!ow) continue;
+    if(keep.some(k=>k.wallId===o.wallId&&Math.abs(k.u-o.u)*dist(node(ow.a),node(ow.b))*S.mpp<0.3)) continue;
     keep.push(o);
   }
   return keep;
@@ -2114,6 +2179,73 @@ function buildSite(group,spanX,spanZ,modelMode){
   }
 }
 
+
+/* One wall's geometry, on its own, so an edit can rebuild just that wall
+   instead of the entire model plus its furniture and its trees. */
+function buildWall(w,parent){
+  const c=parent.userData.ctx; if(!c) return null;
+  const {cx,cy,m,H,T,modelMode,matW}=c;
+  const X=p=>(p.x-cx)*m, Z=p=>(p.y-cy)*m;
+  const a=node(w.a), b=node(w.b); if(!a||!b) return null;
+  const ax=X(a),az=Z(a),bx=X(b),bz=Z(b);
+  const L=Math.hypot(bx-ax,bz-az); if(L<.01) return null;
+  const g=new THREE.Group();
+  g.position.set((ax+bx)/2,0,(az+bz)/2);
+  g.rotation.y=-Math.atan2(bz-az,bx-ax);
+  const ops=S.openings.filter(o=>o.wallId===w.id)
+    .map(o=>({s:clamp(o.u*L-o.width/2,0,L),e:clamp(o.u*L+o.width/2,0,L),o}))
+    .sort((p,q)=>p.s-q.s);
+  const box=(len,hgt,y0,x0,mat)=>{
+    if(len<=.004||hgt<=.004) return;
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(len,hgt,T),mat);
+    mesh.position.set(x0-L/2+len/2,y0+hgt/2,0);
+    mesh.castShadow=true; mesh.receiveShadow=true;
+    mesh.userData={h:hgt,y0:y0+hgt/2};
+    g.add(mesh);
+  };
+  let cur=0;
+  for(const {s:s0,e:e0,o} of ops){
+    if(s0>cur) box(s0-cur,H,0,cur,matW);
+    const head=Math.min(o.head,H);
+    if(o.sill>.004) box(e0-s0,o.sill,0,s0,matW);
+    if(head<H-.004) box(e0-s0,H-head,head,s0,matW);
+    if(o.kind==='window'&&!modelMode){
+      const gl=new THREE.Mesh(new THREE.BoxGeometry(e0-s0,head-o.sill,T*.16),MAT.glass);
+      gl.position.set(s0-L/2+(e0-s0)/2,o.sill+(head-o.sill)/2,0);
+      gl.userData={h:head-o.sill,y0:o.sill+(head-o.sill)/2};
+      g.add(gl);
+    }
+    cur=e0;
+  }
+  if(cur<L) box(L-cur,H,0,cur,matW);
+  g.userData.wallId=w.id;
+  parent.add(g);
+  parent.userData.wallGroups.set(w.id,g);
+  if(S.raised) applyRiseTo(g,1);
+  return g;
+}
+
+/* Rebuild only the walls named, leaving floors, furniture and the site alone.
+   A wall drag used to rebuild every tree on the site on every pointer move. */
+function syncWalls(ids){
+  if(!shell||!shell.userData.ctx) return false;
+  const map=shell.userData.wallGroups; if(!map) return false;
+  const set=ids?new Set(ids):new Set(S.walls.map(w=>w.id));
+  for(const id of set){
+    const old=map.get(id);
+    if(old){ shell.remove(old); disposeTree(old); map.delete(id); }
+    const w=wallById(id);
+    if(w) buildWall(w,shell);
+  }
+  /* anything that vanished from the model */
+  for(const [id,g] of [...map]) if(!wallById(id)){ shell.remove(g); disposeTree(g); map.delete(id); }
+  return true;
+}
+function applyRiseTo(g,e){
+  g.traverse(o=>{ if(o.userData.h===undefined) return;
+    o.scale.y=Math.max(1e-4,e); o.position.y=o.userData.y0*e; });
+}
+
 function build3D(){
   init3D(); buildMaterials();
   if(shell){ scene.remove(shell); disposeTree(shell); }
@@ -2161,41 +2293,12 @@ function build3D(){
     f.position.y=-.02; f.receiveShadow=true; shell.add(f);
   }
 
-  S.walls.forEach((w,wi)=>{
-    const a=node(w.a), b=node(w.b); if(!a||!b) return;
-    const ax=X(a),az=Z(a),bx=X(b),bz=Z(b);
-    const L=Math.hypot(bx-ax,bz-az); if(L<.01) return;
-    const g=new THREE.Group();
-    g.position.set((ax+bx)/2,0,(az+bz)/2);
-    g.rotation.y=-Math.atan2(bz-az,bx-ax);
-    const ops=S.openings.filter(o=>o.wall===wi)
-      .map(o=>({s:clamp(o.u*L-o.width/2,0,L),e:clamp(o.u*L+o.width/2,0,L),o}))
-      .sort((p,q)=>p.s-q.s);
-    const box=(len,hgt,y0,x0,mat)=>{
-      if(len<=.004||hgt<=.004) return;
-      const mesh=new THREE.Mesh(new THREE.BoxGeometry(len,hgt,T),mat);
-      mesh.position.set(x0-L/2+len/2,y0+hgt/2,0);
-      mesh.castShadow=true; mesh.receiveShadow=true;
-      mesh.userData={h:hgt,y0:y0+hgt/2};
-      g.add(mesh);
-    };
-    let cur=0;
-    for(const {s,e,o} of ops){
-      if(s>cur) box(s-cur,H,0,cur,matW);
-      const head=Math.min(o.head,H);
-      if(o.sill>.004) box(e-s,o.sill,0,s,matW);
-      if(head<H-.004) box(e-s,H-head,head,s,matW);
-      if(o.kind==='window'&&!modelMode){
-        const gl=new THREE.Mesh(new THREE.BoxGeometry(e-s,head-o.sill,T*.16),MAT.glass);
-        gl.position.set(s-L/2+(e-s)/2,o.sill+(head-o.sill)/2,0);
-        gl.userData={h:head-o.sill,y0:o.sill+(head-o.sill)/2};
-        g.add(gl);
-      }
-      cur=e;
-    }
-    if(cur<L) box(L-cur,H,0,cur,matW);
-    shell.add(g);
-  });
+  /* the frame every incremental rebuild works in. Kept fixed while editing so a
+     drag cannot make the whole model jump; it is recomputed on a full build. */
+  shell.userData.ctx={cx,cy,m,H,T,modelMode,matW,matF};
+  shell.userData.wallGroups=new Map();
+
+  S.walls.forEach(w=>buildWall(w,shell));
 
   /* where eye level puts you: the middle of the largest room the user closed,
      falling back to the middle of the plan when nothing is closed yet */
@@ -2375,6 +2478,6 @@ $('#xJson').onclick=()=>{
 document.addEventListener('click',e=>{
   if(!e.target.closest('#opt,#exp,#tOpt,#tExp')) closePops();
 });
-sizeCanvas(); draw(); refresh();
+sizeCanvas(); draw(); refresh(); sync();
 new ResizeObserver(()=>{sizeCanvas();draw();resize3D();}).observe(document.body);
 Cloud.init();

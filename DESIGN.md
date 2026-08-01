@@ -102,6 +102,10 @@ outline at 1px offset, on canvas handles as well as buttons.
 - **The model is framed, not guessed.** On the first raise the camera fits the eight corners of
   the plan's bounding box at the opening orbit angles, against the pane's own aspect. The stage is
   a tall narrow column, so it is the horizontal half-angle that sets the distance.
+- **What the software worked out is stated, not hidden.** When a plan builds itself, a bar over
+  the sheet names the scale it read, where it read it, and how many walls it found, with "wrong
+  scale? set it by hand" beside it. The check mark is the one place a yellow disc appears; it
+  marks a claim the software is making, which is exactly the thing that must not be quiet.
 - **The proposal is reviewed on the sheet, never in a modal.** Detected walls are drawn as a
   pale band the thickness of the wall with a dashed graphite centreline — legible on black
   poché and on white paper alike — and a run switched off goes to a thin blade-red dash. A bar
@@ -129,7 +133,10 @@ Plain verbs, sentence case, second person. Controls name their action and keep t
 the flow. Errors name the problem and the recovery — "That line is too short to measure from.
 Draw a longer one." Never an apology, never a vague failure.
 
-Numbers are metric and never invented: a dimension appears only after the user has calibrated,
+A dimension label is never lettered wider than the wall it describes — a number that overruns its
+own wall is noise, not a measurement.
+
+Numbers are metric and never invented: a dimension appears only after the scale is known,
 and the scale chip stays yellow and reads "not set" until then. The status bar says "Corners snap
 to the drawing" only on a page that really has vector paths, and says nothing at all on a scan —
 the interface never claims an accuracy it does not have.

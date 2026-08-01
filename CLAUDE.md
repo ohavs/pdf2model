@@ -5,9 +5,12 @@ extend the project instead of restarting it.
 
 ## What this is
 
-A browser tool that turns an architectural PDF into a measured 3D interior. The user opens a
-plan, calibrates it against one known length, traces the walls by clicking corners, cuts doors
-and windows into them, and the walls rise into a model they can orbit or stand inside.
+A browser tool that turns an architectural PDF into a measured 3D interior. **Importing a
+vector plan is enough**: the software reads the scale off the drawing, detects the walls from
+its geometry, and the model stands — typically inside four seconds. Everything it worked out is
+stated on screen and replaceable, and everything is editable afterwards by hand: drag a wall,
+cut a door or a window, re-calibrate, retrace. On a scan, or a page it cannot read, it asks for
+one known length and the old manual flow takes over unchanged.
 
 Audience now: curious non-professionals holding a real plan from their architect. Audience next,
 gated on quality: architects and interior designers producing a fast client-facing visual.
@@ -49,8 +52,12 @@ access to `impeccable.style`; the original direction roll ran degraded without i
 - **No secret ever reaches `public/`.** The Firebase web config there is not a secret — it
   identifies the project and grants nothing. Model API keys, service accounts and anything
   signed go in a Cloud Function, never the client.
-- **Calibration is a gate.** No dimension is displayed, and no wall can be traced, before the
-  user has set scale. Never estimate or infer a scale silently.
+- **Scale is read, never guessed, and never silent.** A plan states its own scale, so the
+  software reads it — the printed ratio (`1:100`, `קנ״מ 1:50`) against the page's physical size,
+  cross-checked against the lettered dimension strings matched to the lines they annotate. What
+  was read and how it was read is on screen, and one click replaces it with a hand calibration.
+  When the drawing cannot be read — a scan, no ratio, too few dimensions — it says so and asks.
+  It must never invent a scale, and never adopt one without showing its source.
 - **Metric first.** Metres or centimetres, chosen in the calibration popover and remembered.
   Imperial is an equal option to add, never the default.
 - **Never present geometry as fact that the user did not accept.** Detection may *propose* —

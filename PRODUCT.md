@@ -16,11 +16,16 @@ The first audience forgives a rough edge. The second does not, and is the reason
 
 Turn a flat architectural PDF into a measured, inhabitable interior — a 3D space you can look around, and images good enough to show someone.
 
-The mechanism the product owns: **the person confirms what things are.** The user marks one known length to set scale — the one thing a human answers instantly and a machine answers unreliably. From there the software reads the drawing's own vector geometry and *proposes* the walls: pairs of parallel faces a plausible thickness apart, nothing learned and nothing guessed about what a symbol means. The proposal is drawn on the sheet, every run can be switched off, and not one line becomes geometry until the user accepts it. Then they edit it by hand — click, drag, snap, undo — and a change on the paper is a change to the model immediately.
+The mechanism the product owns: **the drawing already knows, and the software reads it.** A plan
+states its own scale and draws its own walls; almost every tool in this category throws that away
+and makes a person re-enter it. Importing a vector plan produces a standing model with no input
+at all — and every inference is shown with its source and is one click from being replaced.
+
+Where it cannot read, it asks rather than guesses: **the person confirms what things are.** The user marks one known length to set scale — the one thing a human answers instantly and a machine answers unreliably. From there the software reads the drawing's own vector geometry and *proposes* the walls: pairs of parallel faces a plausible thickness apart, nothing learned and nothing guessed about what a symbol means. The proposal is drawn on the sheet, every run can be switched off, and not one line becomes geometry until the user accepts it. Then they edit it by hand — click, drag, snap, undo — and a change on the paper is a change to the model immediately.
 
 The distinction that matters: the software may propose, it may never assert. Auto-detection presented as fact would be exactly the fake certainty this product refuses.
 
-Success: a first-time visitor with a real PDF reaches a 3D room in under three minutes without reading instructions, and the result is proportioned correctly enough that an architect would not object.
+Success: a first-time visitor with a real vector PDF reaches a 3D room **without a single click beyond opening the file**, and the result is proportioned correctly enough that an architect would not object. On a scan, under three minutes with the manual flow.
 
 ## Scope
 

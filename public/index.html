@@ -130,6 +130,16 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
   font-weight:500;color:var(--ink-2);cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .units button[aria-pressed="true"]{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:var(--sh-1)}
 
+/* what the software worked out for itself is stated on the sheet, and replaceable */
+#autoBar{position:absolute;z-index:12;top:14px;inset-inline:14px;display:flex;align-items:center;gap:12px;
+  padding:10px 12px 10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--sh-3)}
+#autoBar .mark{width:26px;height:26px;flex-shrink:0;border-radius:99px;background:var(--rule);color:var(--ink);
+  display:flex;align-items:center;justify-content:center}
+#autoBar .t{font-size:14px;font-weight:600;white-space:nowrap}
+#autoBar .d{font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#autoBar .d b{color:var(--ink);font-weight:600}
+
 /* the detection proposal is reviewed on the sheet, never in a modal */
 #propBar{position:absolute;z-index:12;top:14px;inset-inline:14px;display:flex;align-items:center;gap:14px;
   padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
@@ -234,8 +244,8 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
   #tRaise,#tExp,#railSep{display:none}
   #chipScale .lbl{display:none}
   .tool{width:38px;height:38px}
-  #propBar{flex-wrap:wrap;gap:8px}
-  #propBar .d{display:none}
+  #propBar,#autoBar{flex-wrap:wrap;gap:8px}
+  #propBar .d,#autoBar .d{display:none}
   #rail{width:56px}
 }
 @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms !important;animation:none !important}}
@@ -313,6 +323,19 @@ body{font-family:Heebo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fo
           <button id="unitM" aria-pressed="true">מטרים</button>
           <button id="unitCm" aria-pressed="false">סנטימטרים</button>
         </div>
+      </div>
+
+      <div id="autoBar" hidden>
+        <span class="mark" aria-hidden="true">
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <path d="M2.5 8.5l3.5 3.5 7.5-8"/></svg>
+        </span>
+        <span class="t">המודל נבנה אוטומטית</span>
+        <span class="d">קנה מידה <b id="autoScale" class="num">—</b> · <span id="autoHow">—</span><span id="autoWallsWrap"> · <b id="autoWalls" class="num">0</b> קירות זוהו</span></span>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" id="autoManual">קנה מידה שגוי? קבעו ידנית</button>
+        <button class="btn ghost sq sm" id="autoDismiss" aria-label="סגירה">
+          <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
       </div>
 
       <div id="propBar" hidden>

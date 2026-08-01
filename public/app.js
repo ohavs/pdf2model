@@ -17,6 +17,7 @@ const S = {
   history:[],
   raised:false, mode:'model', cam:'orbit',
   proposal:null,
+  scaleSrc:null,
   projectId:null, name:'תוכנית ללא שם', pdfBytes:null, pdfName:'', dirty:false
 };
 let uid = 1;
@@ -233,8 +234,13 @@ async function renderPage(n){
   fit(); draw();
   /* read the page's own linework in the background — the sheet is already up */
   clearVectors(); vecState();
+  VEC.pageScale=vp.scale;
   const token=VEC.token, page=S.page;
-  readVectors(page,vp,token).then(()=>{ if(token===VEC.token){ vecState(); draw(); } });
+  Promise.all([readVectors(page,vp,token),readText(page,vp,token)]).then(()=>{
+    if(token!==VEC.token) return;
+    vecState(); draw();
+    if(!S.mpp) autoBuild();
+  });
 }
 $('#prevPg').onclick=()=>{ if(S.pageNum>1){renderPage(S.pageNum-1);touch();} };
 $('#nextPg').onclick=()=>{ if(S.pageNum<S.numPages){renderPage(S.pageNum+1);touch();} };
@@ -248,7 +254,7 @@ $('#pname').onkeydown=e=>{ if(e.key==='Enter') e.target.blur(); };
    traced corner lands on the architect's line instead of on a pixel the user
    aimed at. Nothing here draws a wall or decides what anything means — it only
    surfaces points the drawing already contains, and Shift ignores them. */
-const VEC={pts:null,grid:null,segs:null,cell:8,token:0};
+const VEC={pts:null,grid:null,segs:null,text:null,pageScale:0,cell:8,token:0};
 const VEC_MAX=90000;
 
 const matMul=(a,b)=>[
@@ -256,7 +262,7 @@ const matMul=(a,b)=>[
   a[0]*b[2]+a[2]*b[3], a[1]*b[2]+a[3]*b[3],
   a[0]*b[4]+a[2]*b[5]+a[4], a[1]*b[4]+a[3]*b[5]+a[5]];
 
-function clearVectors(){ VEC.pts=null; VEC.grid=null; VEC.segs=null; VEC.token++; }
+function clearVectors(){ VEC.pts=null; VEC.grid=null; VEC.segs=null; VEC.text=null; VEC.token++; }
 
 async function readVectors(page,vp,token){
   if(!window.pdfjsLib||!pdfjsLib.OPS) return;
@@ -349,6 +355,113 @@ function vecNear(p,R){
   return best;
 }
 
+/* ══ reading the scale off the drawing ══════════════════════════════
+   A plan states its own scale. Ours reads it two independent ways and only
+   trusts the answer when it can defend it:
+
+     A. the printed ratio — "1:100", "קנ״מ 1:50" — which with the page's own
+        physical size gives an exact answer, no measuring involved;
+     B. the dimension strings the architect lettered, each matched to the
+        dimension line it annotates, taking the median of what they agree on.
+
+   This is reading, not guessing, and it is never silent: what was read and how
+   is on screen, and one click replaces it with a hand calibration. */
+async function readText(page,vp,token){
+  try{
+    const tc=await page.getTextContent();
+    if(token!==VEC.token) return;
+    const T=vp.transform, out=[];
+    for(const it of tc.items){
+      const s=(it.str||'').trim(); if(!s) continue;
+      const m=it.transform;
+      const x=T[0]*m[4]+T[2]*m[5]+T[4], y=T[1]*m[4]+T[3]*m[5]+T[5];
+      const h=Math.hypot(T[1]*m[3],T[3]*m[3])||8;
+      const dx=T[0]*m[0]+T[2]*m[1], dy=T[1]*m[0]+T[3]*m[1];
+      const ang=Math.atan2(dy,dx);
+      const w=(it.width||0)*Math.hypot(T[0],T[1]);
+      out.push({s,x,y,w,h,ang,cx:x+Math.cos(ang)*w/2,cy:y+Math.sin(ang)*w/2});
+    }
+    VEC.text=out;
+  }catch(e){ console.warn('[text]',e); }
+}
+
+/* A. the ratio the drawing prints on itself */
+function scaleFromRatio(){
+  if(!VEC.text||!VEC.pageScale) return null;
+  const KEY=/(קנ|קנה\s*מידה|scale|scl)/i;
+  let best=null;
+  for(const t of VEC.text){
+    const m=t.s.match(/\b1\s*[:\/]\s*(\d{1,4})\b/);
+    if(!m) continue;
+    const R=+m[1];
+    if(R<10||R>1000) continue;
+    const near=KEY.test(t.s)?2:1;
+    if(!best||near>best.near) best={R,near,src:t.s};
+  }
+  if(!best) return null;
+  /* one pdf point is 25.4/72 mm of paper; at 1:R that is R times as much building */
+  const mpp=(25.4/72)/VEC.pageScale*best.R/1000;
+  return {mpp,how:'ratio',label:'1:'+best.R,detail:best.src};
+}
+
+/* B. the dimension strings, each against the line it annotates */
+function scaleFromDimensions(){
+  if(!VEC.text||!VEC.segs) return null;
+  const nums=[];
+  for(const t of VEC.text){
+    const m=t.s.match(/^([0-9]{1,3}(?:[.,][0-9]{1,2})?|[0-9]{2,5})$/);
+    if(!m) continue;
+    const v=parseFloat(m[1].replace(',','.'));
+    if(!isFinite(v)||v<=0) continue;
+    nums.push({...t,v,dec:/[.,]/.test(m[1])});
+  }
+  if(nums.length<3) return null;
+
+  const ests=[];
+  for(const n of nums){
+    const R=Math.max(n.h*2.6,14);
+    let bestSeg=null,bd=R;
+    for(let i=0;i<VEC.segs.length;i+=4){
+      const x1=VEC.segs[i],y1=VEC.segs[i+1],x2=VEC.segs[i+2],y2=VEC.segs[i+3];
+      const L=Math.hypot(x2-x1,y2-y1);
+      if(L<n.w*0.8) continue;                       // a tick is not a dimension line
+      let a=Math.atan2(y2-y1,x2-x1)-n.ang;
+      a=Math.atan2(Math.sin(a),Math.cos(a));
+      if(Math.abs(Math.sin(a))>0.12) continue;      // must run with the lettering
+      const d=Math.hypot((x1+x2)/2-n.cx,(y1+y2)/2-n.cy);
+      if(d<bd){ bd=d; bestSeg=L; }
+    }
+    if(bestSeg) ests.push({r:n.v/bestSeg,dec:n.dec,v:n.v});
+  }
+  if(ests.length<3) return null;
+
+  const rs=ests.map(e=>e.r).sort((a,b)=>a-b);
+  const med=rs[rs.length>>1];
+  /* how many agree with the median within 2%? that is the confidence */
+  const agree=rs.filter(r=>Math.abs(r-med)/med<0.02).length;
+  if(agree<3) return null;
+
+  /* metres or centimetres: pick whichever puts the sheet at a believable size */
+  const plausible=v=>v*S.srcW>3&&v*S.srcW<400;
+  const asM=med, asCm=med/100;
+  const decimals=ests.filter(e=>e.dec).length;
+  let mpp=null,unit='';
+  if(plausible(asM)&&(decimals>ests.length/2||!plausible(asCm))){ mpp=asM; unit='מ׳'; }
+  else if(plausible(asCm)){ mpp=asCm; unit='ס״מ'; }
+  if(!mpp) return null;
+  return {mpp,how:'dims',label:agree+' מידות רשומות',detail:'ביחידות '+unit,agree};
+}
+
+function inferScale(){
+  const a=scaleFromRatio(), b=scaleFromDimensions();
+  if(a&&b){
+    const off=Math.abs(a.mpp-b.mpp)/a.mpp;
+    if(off<0.03) return {...a,how:'both',label:a.label,detail:'מאושר מול '+b.label};
+    return a;                       // the printed ratio is exact; prefer it
+  }
+  return a||b||null;
+}
+
 /* ══ wall detection ═════════════════════════════════════════════════
    A wall on a drawing is two parallel faces a plausible thickness apart. We
    look for exactly that, and for nothing else — no learning, no guessing at
@@ -356,7 +469,7 @@ function vecNear(p,R){
    overlay, every run can be switched off, and not one line becomes geometry
    until the user accepts it. Nothing is ever presented as measured fact that
    the user did not agree to. */
-const DET={minLen:0.55, tMin:0.05, tMax:0.42, angTol:0.030, overlap:0.60, joinTol:0.25};
+const DET={minLen:0.80, tMin:0.05, tMax:0.42, angTol:0.030, overlap:0.60, joinTol:0.25};
 
 function detectWalls(){
   if(!VEC.segs||!S.mpp) return [];
@@ -415,7 +528,7 @@ function detectWalls(){
     }
   }
   cands.sort((a,b)=>dist(b.a,b.b)-dist(a.a,a.b));
-  return joinRuns(mergeCollinear(cands,px(0.12)),px(DET.joinTol));
+  return splitTees(joinRuns(mergeCollinear(cands,px(0.12)),px(DET.joinTol)),px(0.30));
 }
 
 /* two candidates on the same line that overlap or nearly touch are one wall */
@@ -442,6 +555,39 @@ function mergeCollinear(cands,tol){
   return out;
 }
 
+/* A partition meets the middle of another wall, not its end. Land that endpoint
+   on the wall and split the wall there, or the graph keeps a dangling stub and
+   no room ever closes — the whole plan came back as a single face. */
+function splitTees(runs,tol){
+  for(let pass=0;pass<4;pass++){
+    let cut=false;
+    for(let i=0;i<runs.length&&runs.length<400;i++){
+      const A=runs[i];
+      for(const k of ['a','b']){
+        const e=A[k];
+        for(let j=0;j<runs.length;j++){
+          if(j===i) continue;
+          const B=runs[j];
+          const vx=B.b.x-B.a.x, vy=B.b.y-B.a.y, L2=vx*vx+vy*vy;
+          if(L2<1) continue;
+          const t=((e.x-B.a.x)*vx+(e.y-B.a.y)*vy)/L2;
+          if(t<=0.02||t>=0.98) continue;                       // that is a corner, not a tee
+          const px2=B.a.x+vx*t, py2=B.a.y+vy*t;
+          if(Math.hypot(e.x-px2,e.y-py2)>tol) continue;
+          const hit={x:px2,y:py2};
+          if(Math.min(dist(B.a,hit),dist(B.b,hit))<tol*0.5) continue;
+          A[k]={...hit};
+          runs.push({a:{...hit},b:{...B.b},th:B.th,t:B.t});
+          B.b={...hit};
+          cut=true;
+        }
+      }
+    }
+    if(!cut) break;
+  }
+  return runs.filter(r=>dist(r.a,r.b)>1);
+}
+
 /* pull endpoints that nearly meet onto one shared corner, so the runs connect */
 function joinRuns(runs,tol){
   const ends=[];
@@ -462,6 +608,63 @@ function joinRuns(runs,tol){
   }
   return runs.filter(r=>dist(r.a,r.b)>1);
 }
+
+/* ══ the automatic path ═════════════════════════════════════════════
+   Import a plan and the model stands. Everything the software worked out for
+   itself stays on screen and stays replaceable — the scale it read, from where,
+   and how many walls it found. When it cannot read the drawing it says so and
+   asks, which is the old flow, unchanged. */
+function autoBuild(){
+  const g=inferScale();
+  if(!g){
+    setTool('calibrate');
+    say('לא הצלחתי לקרוא את קנה המידה מהשרטוט. סמנו קיר אחד שאתם יודעים את אורכו.');
+    refresh();
+    return;
+  }
+  S.mpp=g.mpp; S.scaleSrc=g;
+  $('#chipScale').classList.remove('unset');
+  $('#scaleVal').textContent=(1/S.mpp).toFixed(1)+' px = 1 מ׳';
+  ['#tWall','#tDoor','#tWin','#tAuto'].forEach(x=>$(x).disabled=false);
+
+  const runs=(VEC.segs&&VEC.segs.length)?detectWalls():[];
+  if(!runs.length){
+    setTool('wall'); showAutoBar(g,0);
+    say('קראתי את קנה המידה, אבל לא זיהיתי קירות. סמנו אותם — הפינות נצמדות לשרטוט.');
+    refresh();
+    return;
+  }
+  S.proposal=runs.map(r=>({a:r.a,b:r.b,on:true}));
+  acceptProposal(true);
+  showAutoBar(g,runs.length);
+  setTool('select');
+  if(!$('#tRaise').disabled) raise();
+  say('המודל מוכן. לחצו על קיר כדי לערוך אותו, או הוסיפו דלתות וחלונות.');
+}
+
+function showAutoBar(g,n){
+  const bar=$('#autoBar'); if(!bar) return;
+  bar.hidden=false;
+  $('#autoScale').textContent=g.label;
+  $('#autoHow').textContent=g.how==='ratio'?'נקרא מהשרטוט'
+    :g.how==='dims'?'חושב מהמידות הרשומות':'נקרא מהשרטוט ואומת מול המידות';
+  $('#autoWalls').textContent=n;
+  $('#autoWallsWrap').hidden=!n;
+}
+function hideAutoBar(){ const b=$('#autoBar'); if(b) b.hidden=true; }
+$('#autoManual').onclick=()=>{
+  hideAutoBar();
+  S.mpp=null; S.scaleSrc=null;
+  $('#chipScale').classList.add('unset');
+  $('#scaleVal').textContent='לא נקבע';
+  pushHistory();
+  S.nodes=[];S.walls=[];S.rooms=[];S.openings=[];S.chain=[];S.sel=null;S.proposal=null;
+  S.raised=false; clear3D(); syncProposal();
+  ['#tWall','#tDoor','#tWin','#tAuto'].forEach(x=>$(x).disabled=true);
+  setTool('calibrate'); refresh(); draw();
+  say('סמנו קיר אחד שאתם יודעים את אורכו, ואז הזינו את האורך.');
+};
+$('#autoDismiss').onclick=hideAutoBar;
 
 /* ══ proposal ═══════════════════════════════════════════════════════ */
 function proposeWalls(){
@@ -494,7 +697,52 @@ function syncProposal(){
   $('#propAccept').disabled=!on;
 }
 
-function acceptProposal(){
+/* Walk the wall graph's planar faces: from each directed half-edge, always turn
+   as tightly as possible. Every bounded face is a room, and a room is a floor.
+   PARTIAL: on a detected plan this reliably closes the outer envelope but not
+   the interior rooms, even though splitTees does produce the three-way nodes
+   the interior cycles need — measured 8 of them and still only two faces. Until
+   that is understood the model falls back to a slab under the footprint, which
+   is correct for the envelope and wrong for an L-shaped plan. A hand-traced
+   closed loop still becomes its own floor, as it always did. */
+function findRooms(){
+  const adj=new Map();
+  const add=(a,b)=>{ const l=adj.get(a); if(l) l.push(b); else adj.set(a,[b]); };
+  for(const w of S.walls){ if(w.a===w.b) continue; add(w.a,w.b); add(w.b,w.a); }
+  if(!adj.size) return [];
+  const ang=(a,b)=>{ const p=node(a),q=node(b); return p&&q?Math.atan2(q.y-p.y,q.x-p.x):0; };
+  for(const [k,l] of adj) l.sort((x,y)=>ang(k,x)-ang(k,y));
+
+  const seen=new Set(), faces=[];
+  for(const [a,l] of adj) for(const b of l){
+    if(seen.has(a+'>'+b)) continue;
+    const loop=[]; let ca=a, cb=b, guard=0;
+    while(guard++<4000){
+      if(seen.has(ca+'>'+cb)) break;
+      seen.add(ca+'>'+cb); loop.push(ca);
+      const nb=adj.get(cb); if(!nb||!nb.length) break;
+      const back=ang(cb,ca);
+      /* the next edge clockwise from the one we came in on */
+      let pick=nb[0], bestD=Infinity;
+      for(const c of nb){
+        let d=back-ang(cb,c); d=(d%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+        if(d<1e-9) d=Math.PI*2;
+        if(d<bestD){ bestD=d; pick=c; }
+      }
+      ca=cb; cb=pick;
+      if(ca===a&&cb===b) break;
+    }
+    if(loop.length>=3) faces.push(loop);
+  }
+  const area=l=>{ let A=0; for(let i=0;i<l.length;i++){ const p=node(l[i]),q=node(l[(i+1)%l.length]);
+    if(!p||!q) return 0; A+=p.x*q.y-q.x*p.y; } return A/2; };
+  const minA=(1.2/(S.mpp*S.mpp));                      // ignore anything under 1.2 m²
+  return faces.filter(f=>{ const A=area(f); return A<0&&Math.abs(A)>minA; })
+              .sort((x,y)=>Math.abs(area(y))-Math.abs(area(x)))
+              .slice(0,60);
+}
+
+function acceptProposal(quiet){
   const p=S.proposal; if(!p) return;
   const keep=p.filter(w=>w.on);
   if(!keep.length) return;
@@ -509,8 +757,10 @@ function acceptProposal(){
     const a=at(w.a), b=at(w.b);
     if(a!==b) S.walls.push({a,b,id:uid++});
   }
+  S.rooms=findRooms();
   S.proposal=null; syncProposal();
   refresh(); draw(); touch(); if(S.raised) build3D();
+  if(quiet===true) return;
   say('הקירות התקבלו. אפשר לערוך אותם, לחתוך פתחים, או להרים.');
   toast(keep.length+' קירות נוספו. הם שלכם עכשיו — אפשר לגרור, למחוק ולהוסיף.');
 }
@@ -727,7 +977,7 @@ function openingAt(p){
 let panning=false, panStart=null, dragOpening=-1;
 
 planEl.addEventListener('pointerdown',e=>{
-  if(!S.src||e.target.closest('#lenPop,#zoom,#stageBar,#propBar')) return;
+  if(!S.src||e.target.closest('#lenPop,#zoom,#stageBar,#propBar,#autoBar')) return;
   closePops();
   const r=planEl.getBoundingClientRect(), sp={x:e.clientX-r.left,y:e.clientY-r.top};
   if(e.button===1||keys.space){ panning=true;panStart={...sp,vx:S.view.x,vy:S.view.y};planEl.classList.add('panning');cv.setPointerCapture(e.pointerId);return; }
@@ -924,7 +1174,7 @@ function refresh(){
 }
 $('#stageRaise').onclick=raise;
 $('#tAuto').onclick=proposeWalls;
-$('#propAccept').onclick=acceptProposal;
+$('#propAccept').onclick=()=>acceptProposal();
 $('#propCancel').onclick=cancelProposal;
 $('#propRedo').onclick=proposeWalls;
 
@@ -990,6 +1240,8 @@ function drawWalls(){
     ctx.save(); ctx.translate((A.x+B.x)/2,(A.y+B.y)/2); ctx.rotate(ang);
     ctx.font='500 11px "Archivo Narrow", sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
     const tw=ctx.measureText(txt).width;
+    /* a number wider than its own wall is noise, not a measurement */
+    if(tw+8>Math.hypot(B.x-A.x,B.y-A.y)){ ctx.restore(); return; }
     ctx.fillStyle=on?'#E8B923':'#FFFFFF'; ctx.fillRect(-tw/2-3,-8,tw+6,15);
     ctx.fillStyle='#23211E'; ctx.fillText(txt,0,0);
     ctx.restore();

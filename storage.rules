@@ -4,7 +4,11 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /plans/{uid}/{file} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      // Delete is a write, but a delete carries no request.resource — checking its
+      // size and contentType made it impossible for an owner to remove their own
+      // plan, so uploads could only ever accumulate. Verified against the live
+      // bucket: storage/unauthorized on the owner's own file.
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
       allow write: if request.auth != null
                    && request.auth.uid == uid
                    && request.resource.size < 25 * 1024 * 1024

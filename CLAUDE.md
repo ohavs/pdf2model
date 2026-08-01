@@ -75,15 +75,18 @@ load, calibrate, trace, cut openings, raise, Model and Render, orbit and eye lev
 both popovers, export menu. 54 text elements measured on the render, none below AA, lowest
 4.56:1. `DESIGN.md` now records what the code does, not what was intended.
 
-**Still unverified:** anything that needs the live Firebase project — anonymous auth, save,
-reload, and the recent-plans list have never run against a real backend, because
-`public/firebase-config.js` still holds `PASTE_…` placeholders and there are no deploy
-credentials in this environment. The app is designed to run without it and reports "Local only".
+**The cloud path is verified against the live project**: anonymous auth, autosave to Firestore,
+PDF to Storage, reload, the recent-plans list, reopen, and delete. Deployed at
+`https://pdf2model.web.app`. With no config or a dead backend the app still works and says so —
+"Local only" or "Offline", and the empty state switches to "nothing leaves your browser".
 
-The finish-review harness is not in the repo; it lives in the session scratchpad. To rebuild it:
-serve `public/`, drive it with Playwright, and substitute the CDN scripts with local copies if
-your network blocks cdnjs. Firebase's own CDN can be stubbed — `Cloud.init` bails on a
-placeholder config anyway.
+**Not verified:** the detector against a real 1:100 plan. See queue item 4.
+
+The harnesses are not in the repo; they live in the session scratchpad. To rebuild: serve
+`public/`, drive it with Playwright, and substitute the blocked CDN scripts with copies vendored
+from npm. `contrast.js` walks every visible text node and measures it against AA; `drive.js`
+captures the full flow at 1440 and 390; `dettest.js` exercises detection; `cloudtest.js` does the
+live backend round trip.
 
 ## Task queue, in order
 
@@ -93,35 +96,33 @@ placeholder config anyway.
    `impeccable.style`, which this environment's egress policy returns 403 for. The review was
    conducted by hand against the direction contract in `index.html` and `DESIGN.md`. Re-run it
    with the real reviewer when the host is reachable.
-2. **Deploy and confirm — BLOCKED, needs you.** The real web config is now in
-   `public/firebase-config.js` and the key is valid. **The project's backend services have
-   never been provisioned.** Probed directly against the Google APIs:
-   - Auth → `CONFIGURATION_NOT_FOUND`. Console → Authentication → Get started → enable the
-     **Anonymous** provider.
-   - Firestore → `PERMISSION_DENIED: Cloud Firestore API has not been used in project pdf2model
-     before or it is disabled`. Console → Firestore Database → Create database.
-   - Storage → bucket 404 under both `pdf2model.firebasestorage.app` and `pdf2model.appspot.com`.
-     Console → Storage → Get started. (The console prints a `storageBucket` string before the
-     bucket exists, so the config value is not evidence that it does.)
+2. ~~**Deploy and confirm.**~~ Done and verified against the live project. `firebase deploy`
+   ships hosting, rules and indexes; the site is `https://pdf2model.web.app`. Auth (anonymous),
+   Firestore and Storage are all provisioned and the rules are released.
 
-   Then deploy credentials, which only the owner can mint: `FIREBASE_TOKEN`, or a service-account
-   JSON at `GOOGLE_APPLICATION_CREDENTIALS`. `firebase login` cannot run here — no browser.
-   `firebase-tools` installs fine and the rules and indexes read correctly.
+   Verified end to end from localhost against the real backend — a deploy is not needed for
+   this, the SDK talks to the live project either way: anonymous auth → open a plan → detection
+   accepted → autosave to Firestore → PDF to Storage → reload in a fresh page → same anonymous
+   uid → plan in the recent list → reopen with all 21 walls, the scale and the PDF restored →
+   delete both the doc and the file. All five steps pass, nothing left behind.
 
-   Note that most of the *verification* does not need a deploy: serve `public/` on localhost and
-   the SDK talks to the real project. `identitytoolkit`, `firestore` and `firebasestorage`
-   googleapis hosts are reachable from this sandbox; `www.gstatic.com` and
-   `pdf2model.firebaseapp.com` are not, so vendor the `firebase-*-compat.js` bundles from npm.
-   `cloudtest.js` in the session scratchpad does auth → save → reload → recent list → reopen →
-   cleanup and is worth rebuilding.
+   Two rules bugs this turned up, both fixed and released:
+   - **Storage delete was impossible for the owner.** `allow write` required
+     `request.resource.size` and `contentType`, but a delete carries no `request.resource`, so
+     every upload was permanent. `read, delete` is now its own rule. Confirmed by a live
+     `storage/unauthorized` on the owner's own file before the fix, and a clean delete after.
+   - **Firestore update only checked `resource.data.uid`,** so an owner could rewrite the `uid`
+     field and hand their document to someone else. It now checks `request.resource.data.uid`
+     as well.
 
-   Verified meanwhile: with a real config whose backend is dead, the app degrades honestly —
-   "Offline", a toast saying nothing will be saved, and the empty state switched to "Nothing
-   leaves your browser."
+   Two notes for the next session. `www.gstatic.com`, `pdf2model.web.app` and
+   `pdf2model.firebaseapp.com` are all blocked by this sandbox's egress policy, so the live URL
+   cannot be loaded here — verify by hash against the Hosting API instead, and vendor the
+   `firebase-*-compat.js` bundles from npm to test locally. And Chromium's own TLS through the
+   sandbox relay resets on the googleapis hosts; route those requests through Playwright's
+   `route.fetch()` so Node does the fetching. `cloudtest.js` in the session scratchpad does all
+   of this and is worth rebuilding.
 
-   One thing to tighten while you are in there: `firestore.rules` checks `resource.data.uid` on
-   update but not `request.resource.data.uid`, so an owner can rewrite the `uid` field on their
-   own doc. Untested here, so left alone.
 3. ~~**Read vector PDFs properly.**~~ Done. `readVectors()` in `app.js` walks
    `getOperatorList`, carries the CTM through save/restore/transform and form XObjects, and
    feeds the endpoints to `snapPoint`. Verified: clicks 100 mm off every corner of an 11×8 m
@@ -129,10 +130,17 @@ placeholder config anyway.
    and behaves as before. **Endpoints only** — segments are discarded after their endpoints are
    taken, so there is no snap to a point *along* a wall, and no perpendicular or midpoint snap.
    That is the obvious next increment.
-4. **Photoreal render path.** A Cloud Function that takes the depth and normal buffers from the
+4. **Tune the detector on real plans.** `detectWalls()` finds the envelope and every partition
+   on a 1:50 test sheet — 21 runs from 188 segments — but it also proposes fixtures and joinery
+   as short runs, and it has never been measured against a 1:100 sheet with thinner walls or
+   against Israeli drafting conventions. The review step absorbs the noise, but the ranking is
+   the thing to improve: prefer long, well-supported runs, and consider dropping candidates that
+   sit inside a room rather than on its boundary. Needs real plans to tune against, not
+   synthetic ones.
+5. **Photoreal render path.** A Cloud Function that takes the depth and normal buffers from the
    existing three.js camera plus a style prompt and returns an image. The geometry is already
    exact, which is the whole advantage — the model only paints it. Key stays server-side.
-5. **Interior content.** Curated PBR materials and a small furniture library in GLB. This is the
+6. **Interior content.** Curated PBR materials and a small furniture library in GLB. This is the
    product's stated centre of gravity and currently its thinnest part.
 
 Out of scope until asked: multi-storey, exteriors and roofs, DWG import, construction documents.
